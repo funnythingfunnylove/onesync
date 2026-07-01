@@ -66,24 +66,40 @@ export type PrivateBookmarkManagerViewModel = {
   };
 };
 
-function flattenTree(nodes: PrivateBookmarkViewNode[]): PrivateBookmarkViewNode[] {
+type TreeNodeLocation = {
+  node: PrivateBookmarkViewNode;
+  parentFolderId: string | null;
+};
+
+function flattenTree(nodes: PrivateBookmarkViewNode[], parentFolderId: string | null = null): PrivateBookmarkViewNode[] {
   const flattened: PrivateBookmarkViewNode[] = [];
 
   for (const node of nodes) {
     flattened.push(node);
-    flattened.push(...flattenTree(node.children));
+    flattened.push(...flattenTree(node.children, node.type === "folder" ? node.id : parentFolderId));
   }
 
   return flattened;
 }
 
-function findTreeNode(nodes: PrivateBookmarkViewNode[], nodeId: string): PrivateBookmarkViewNode | null {
+function findTreeNodeLocation(
+  nodes: PrivateBookmarkViewNode[],
+  nodeId: string,
+  parentFolderId: string | null = null
+): TreeNodeLocation | null {
   for (const node of nodes) {
     if (node.id === nodeId) {
-      return node;
+      return {
+        node,
+        parentFolderId
+      };
     }
 
-    const nestedMatch = findTreeNode(node.children, nodeId);
+    const nestedMatch = findTreeNodeLocation(
+      node.children,
+      nodeId,
+      node.type === "folder" ? node.id : parentFolderId
+    );
 
     if (nestedMatch) {
       return nestedMatch;
@@ -116,20 +132,25 @@ export function buildPrivateBookmarkManagerViewModel(
     selectedNodeId?: string;
   }
 ): PrivateBookmarkManagerViewModel {
-  const resolvedSelectedFolderId = state.folders.some((folder) => folder.id === options.selectedFolderId)
+  const selectedTreeNodeLocation = options.selectedNodeId
+    ? findTreeNodeLocation(state.tree, options.selectedNodeId)
+    : null;
+  const fallbackFolderId = state.folders.some((folder) => folder.id === options.selectedFolderId)
     ? (options.selectedFolderId ?? state.selectedFolderId)
     : state.selectedFolderId;
-  const selectedFolderNode = findTreeNode(state.tree, resolvedSelectedFolderId);
+  const resolvedSelectedFolderId =
+    selectedTreeNodeLocation?.node.type === "folder"
+      ? selectedTreeNodeLocation.node.id
+      : selectedTreeNodeLocation?.parentFolderId ?? fallbackFolderId;
+  const selectedFolderNode = findTreeNodeLocation(state.tree, resolvedSelectedFolderId)?.node ?? null;
   const visibleSource =
     options.activeTab === "tree" ? flattenTree(state.tree) : (selectedFolderNode?.children ?? state.currentFolder?.children ?? []);
   const visibleNodeIds = new Set(visibleSource.map((node) => node.id));
-  const resolvedSelectedNodeId = visibleNodeIds.has(options.selectedNodeId ?? "")
-    ? (options.selectedNodeId ?? null)
+  const resolvedSelectedNodeId = options.selectedNodeId && (selectedTreeNodeLocation || visibleNodeIds.has(options.selectedNodeId))
+    ? options.selectedNodeId
     : resolvedSelectedFolderId;
   const selectedNode =
-    visibleSource.find((node) => node.id === resolvedSelectedNodeId) ??
-    flattenTree(state.tree).find((node) => node.id === resolvedSelectedNodeId) ??
-    null;
+    (resolvedSelectedNodeId ? findTreeNodeLocation(state.tree, resolvedSelectedNodeId)?.node ?? null : null);
   const selectedFolder = state.folders.find((folder) => folder.id === resolvedSelectedFolderId) ?? null;
   const actionsDisabled = state.mode === "unavailable";
   const selectedNodeIsRoot = selectedNode ? isRootFolder(state, selectedNode.id) : false;

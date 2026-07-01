@@ -37,7 +37,7 @@ const sampleConfig: SyncConfig = {
 const samplePrivateState: PrivateBookmarksViewState = {
   mode: "private",
   selectedFolderId: "root-toolbar",
-  itemCount: 5,
+  itemCount: 6,
   modeHint: "This is your primary local bookmark workspace.",
   folders: [
     { id: "root-toolbar", title: "Bookmarks Bar", depth: 0 },
@@ -79,7 +79,16 @@ const samplePrivateState: PrivateBookmarksViewState = {
           type: "folder",
           title: "Folder A",
           depth: 1,
-          children: []
+          children: [
+            {
+              id: "bookmark-2",
+              type: "bookmark",
+              title: "Nested docs",
+              url: "https://example.com/nested",
+              depth: 2,
+              children: []
+            }
+          ]
         },
         {
           id: "folder-b",
@@ -182,6 +191,71 @@ describe("options view-model", () => {
         expect.objectContaining({ id: "folder-b", isSelected: false })
       ])
     );
+  });
+
+  it("uses a selected folder node as the folder and action context even when the previous folder differs", () => {
+    const viewModel = buildPrivateBookmarkManagerViewModel(samplePrivateState, {
+      activeTab: "folders",
+      selectedFolderId: "root-toolbar",
+      selectedNodeId: "folder-a"
+    });
+
+    expect(viewModel.selectedFolder).toMatchObject({
+      id: "folder-a",
+      title: "Folder A"
+    });
+    expect(viewModel.selectedNode).toMatchObject({
+      id: "folder-a",
+      type: "folder"
+    });
+    expect(viewModel.folderEntries).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "folder-a", isSelected: true })])
+    );
+    expect(viewModel.visibleNodes).toEqual([
+      expect.objectContaining({
+        id: "bookmark-2",
+        type: "bookmark"
+      })
+    ]);
+    expect(viewModel.moveDestinations).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "folder-a", isSelected: true })])
+    );
+  });
+
+  it("uses the selected bookmark parent folder as the action context instead of a stale folder selection", () => {
+    const viewModel = buildPrivateBookmarkManagerViewModel(samplePrivateState, {
+      activeTab: "folders",
+      selectedFolderId: "root-toolbar",
+      selectedNodeId: "bookmark-2"
+    });
+
+    expect(viewModel.selectedFolder).toMatchObject({
+      id: "folder-a",
+      title: "Folder A"
+    });
+    expect(viewModel.selectedNode).toMatchObject({
+      id: "bookmark-2",
+      type: "bookmark",
+      isSelected: true
+    });
+    expect(viewModel.folderEntries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "folder-a", isSelected: true }),
+        expect.objectContaining({ id: "root-toolbar", isSelected: false })
+      ])
+    );
+    expect(viewModel.visibleNodes).toEqual([
+      expect.objectContaining({
+        id: "bookmark-2",
+        type: "bookmark",
+        isSelected: true
+      })
+    ]);
+    expect(viewModel.moveDestinations).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "folder-a", isSelected: true })])
+    );
+    expect(viewModel.actions.createFolder.disabled).toBe(false);
+    expect(viewModel.actions.createBookmark.disabled).toBe(false);
   });
 
   it("protects root folders and preserves the tree tab selection for unavailable runtimes", () => {

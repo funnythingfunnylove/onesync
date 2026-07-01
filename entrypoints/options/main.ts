@@ -499,9 +499,7 @@ async function renderOptionsPage(privateBookmarksStateOverride?: Awaited<ReturnT
 
     if (folderId) {
       selectedPrivateFolderId = folderId;
-      if (privateTab === "folders") {
-        selectedPrivateNodeId = folderId;
-      }
+      selectedPrivateNodeId = folderId;
       await renderOptionsPage(privateBookmarksState);
       return;
     }
