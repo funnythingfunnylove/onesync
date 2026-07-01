@@ -186,10 +186,15 @@ a {
   text-transform: uppercase;
 }
 
-.status-pill-healthy,
-.status-pill-ready {
+.status-pill-healthy {
   background: var(--green-bg);
   color: var(--green-text);
+}
+
+.status-pill-ready {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--muted);
 }
 
 .status-pill-working {

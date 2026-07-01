@@ -232,7 +232,7 @@ function getSyncOverview(syncState: SyncState): {
   if (!syncState.lastSuccessfulSyncAt) {
     return {
       tone: "ready",
-      badge: "Ready",
+      badge: "Pending",
       heading: "First sync pending",
       note: "Save settings and sync"
     };
