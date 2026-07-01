@@ -333,9 +333,7 @@ async function renderOptionsPage(privateBookmarksStateOverride?: Awaited<ReturnT
   const activeFolderLabel = privateBookmarkManager.selectedFolder?.title ?? "Library";
   const folderCount = privateBookmarkManager.folderEntries.length;
   const treeViewLabel = privateBookmarkManager.activeTab === "folders" ? "Focused view" : "Hierarchy view";
-  const selectionDescription = selectedNodeUrl
-    ? "Shared private dataset"
-    : "Shared private dataset";
+  const selectionDescription = "Shared private dataset";
   const bookmarkModeMeta = privateBookmarkManager.mode === "native"
     ? "Native carrier"
     : privateBookmarkManager.mode === "private"

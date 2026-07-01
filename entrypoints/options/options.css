@@ -26,10 +26,6 @@
   box-sizing: border-box;
 }
 
-html {
-  scroll-behavior: smooth;
-}
-
 body {
   margin: 0;
   background: var(--page-bg);
@@ -703,14 +699,15 @@ a {
 }
 
 .checkbox-row:focus-within {
-  outline: 2px solid var(--focus-ring);
+  outline: 2px solid var(--blue-text);
   outline-offset: 2px;
-  background: var(--surface-muted);
+  background: var(--blue-bg);
 }
 
 .checkbox-row input:focus-visible {
   outline: 2px solid var(--blue-text);
   outline-offset: 2px;
+  background: var(--surface);
 }
 
 .actions,
@@ -835,14 +832,21 @@ a {
 .private-node-button:focus-visible,
 .private-tab:focus-visible,
 .private-disclosure-button:focus-visible,
-.primary-button:focus-visible,
 .secondary-button:focus-visible,
 .form-grid input:focus-visible,
 .form-grid select:focus-visible,
 .bundle-textarea:focus-visible,
 .field-group select:focus-visible {
-  outline: 2px solid var(--focus-ring);
+  outline: 2px solid var(--blue-text);
   outline-offset: 2px;
+  border-color: var(--blue-text);
+  background-color: var(--blue-bg);
+}
+
+.primary-button:focus-visible {
+  outline: 3px solid var(--blue-text);
+  outline-offset: 2px;
+  border-color: var(--blue-text);
 }
 
 .primary-button:active,

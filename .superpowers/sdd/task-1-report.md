@@ -46,3 +46,11 @@ DONE_WITH_CONCERNS
 
 ## Follow-up verification
 - `pnpm exec tsc --noEmit` passed after the follow-up fix.
+
+## Final fix pass
+- Strengthened keyboard focus treatment on the options page so focus states read clearly on the warm white surfaces, including a darker blue outline and clearer background/border contrast on focusable controls.
+- Removed the redundant `selectionDescription` ternary in `entrypoints/options/main.ts`.
+- Removed `html { scroll-behavior: smooth; }` from `entrypoints/options/options.css` so the page no longer forces smooth scrolling without reduced-motion handling.
+
+## Final verification
+- `pnpm exec tsc --noEmit` passed after the final fixes.
