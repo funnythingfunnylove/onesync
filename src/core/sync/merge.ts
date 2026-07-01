@@ -6,20 +6,6 @@ function newestNode(left: BookmarkNode, right: BookmarkNode): BookmarkNode {
   return left.updatedAt >= right.updatedAt ? left : right;
 }
 
-function mergeFolderChildren(local: string[], remote: string[]): string[] {
-  const seen = new Set<string>();
-  const merged: string[] = [];
-
-  for (const childId of [...local, ...remote]) {
-    if (!seen.has(childId)) {
-      seen.add(childId);
-      merged.push(childId);
-    }
-  }
-
-  return merged;
-}
-
 function deriveDeletionTombstones(base: BookmarkBundle | null, current: BookmarkBundle): BookmarkTombstone[] {
   if (!base) {
     return [];
@@ -70,7 +56,7 @@ export function mergeBundles(
         id: selectedNode.id,
         type: "folder",
         title: selectedNode.title,
-        children: mergeFolderChildren(localNode.children, remoteNode.children),
+        children: [...selectedNode.children],
         addedAt: selectedNode.addedAt,
         updatedAt: selectedNode.updatedAt
       };

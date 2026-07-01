@@ -163,4 +163,40 @@ describe("mergeBundles", () => {
       updatedAt: "2026-06-30T12:04:00.000Z"
     });
   });
+
+  it("keeps a moved node only in the destination folder after merging against an unchanged remote bundle", () => {
+    const base = createBundle();
+    const local = createBundle({
+      generatedAt: "2026-06-30T12:03:00.000Z",
+      nodes: {
+        ...base.nodes,
+        "toolbar-root": {
+          ...requireFolder(base.nodes["toolbar-root"]),
+          children: [],
+          updatedAt: "2026-06-30T12:03:00.000Z"
+        },
+        "menu-root": {
+          ...requireFolder(base.nodes["menu-root"]),
+          children: ["bookmark-1"],
+          updatedAt: "2026-06-30T12:03:00.000Z"
+        },
+        "bookmark-1": {
+          ...base.nodes["bookmark-1"],
+          updatedAt: "2026-06-30T12:03:00.000Z"
+        }
+      }
+    });
+    const remote = createBundle();
+
+    const merged = mergeBundles(base, local, remote);
+    const toolbarRoot = requireFolder(merged.nodes["toolbar-root"]);
+    const menuRoot = requireFolder(merged.nodes["menu-root"]);
+
+    expect(toolbarRoot.children).toEqual([]);
+    expect(menuRoot.children).toEqual(["bookmark-1"]);
+    expect(merged.nodes["bookmark-1"]).toMatchObject({
+      title: "Example",
+      updatedAt: "2026-06-30T12:03:00.000Z"
+    });
+  });
 });
