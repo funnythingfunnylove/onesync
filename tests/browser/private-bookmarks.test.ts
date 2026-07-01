@@ -187,7 +187,7 @@ vi.mock("wxt/browser", () => ({
   browser: browserMock
 }));
 
-import { applySharedBundleLocally } from "../../src/core/browser/bookmarks";
+import { applyBundleToBookmarks, applySharedBundleLocally } from "../../src/core/browser/bookmarks";
 import { loadPrivateManagerBundle, savePrivateManagerBundle } from "../../src/core/browser/private-bookmarks";
 
 const sampleConfig: SyncConfig = {
@@ -320,6 +320,27 @@ const updatedNativeBundle: BookmarkBundle = {
   meta: {
     client: "onesync",
     clientVersion: "0.1.3"
+  }
+};
+
+const syncedNativeBundle: BookmarkBundle = {
+  ...updatedNativeBundle,
+  revision: "2026-07-01T02:00:00.000Z#device-1#remote",
+  generatedAt: "2026-07-01T02:00:00.000Z",
+  nodes: {
+    ...updatedNativeBundle.nodes,
+    "native-folder-1": {
+      ...updatedNativeBundle.nodes["native-folder-1"],
+      updatedAt: "2026-07-01T02:00:00.000Z"
+    },
+    "native-bookmark-2": {
+      id: "native-bookmark-2",
+      type: "bookmark",
+      title: "Synced Bookmark",
+      url: "https://synced.example.com/",
+      addedAt: "2026-07-01T01:00:00.000Z",
+      updatedAt: "2026-07-01T02:00:00.000Z"
+    }
   }
 };
 
@@ -466,6 +487,29 @@ describe("private manager carrier integration", () => {
     });
     expect(bundle.deviceId).toBe(sampleConfig.deviceId);
     expect(bundle.revision).toMatch(/#device-1#snapshot$/);
+  });
+
+  it("stops preferring stale fallback data after a later successful native sync-style apply", async () => {
+    removeMock.mockRejectedValueOnce(new Error("Native bookmarks write blocked"));
+
+    await expect(savePrivateManagerBundle(sampleConfig, updatedNativeBundle, "native")).rejects.toThrow(/not updated/i);
+    expect(storageState["onesync.privateBookmarksNativeFallback"]).toMatchObject({
+      roots: updatedNativeBundle.roots
+    });
+
+    await applyBundleToBookmarks(syncedNativeBundle);
+
+    const bundle = await loadPrivateManagerBundle(sampleConfig);
+    const syncedBookmark = Object.values(bundle.nodes).find(
+      (node) => node.type === "bookmark" && node.title === "Synced Bookmark"
+    );
+
+    expect(syncedBookmark).toMatchObject({
+      title: "Synced Bookmark",
+      url: "https://synced.example.com/"
+    });
+    expect(bundle.nodes["native-bookmark-1"]).toBeUndefined();
+    expect(storageState["onesync.privateBookmarksNativeFallback"]).toBeNull();
   });
 
   it("accepts the private bookmark runtime messages", () => {

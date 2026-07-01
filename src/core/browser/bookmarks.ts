@@ -598,6 +598,8 @@ export async function applyBundleToBookmarks(
 
       await createChildrenFromBundle(nativeRoot.id, nativeRoot.id, bundleRootNode.children, bundle, progressTracker);
     }
+
+    await clearSavedSharedBundleFallback();
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
 

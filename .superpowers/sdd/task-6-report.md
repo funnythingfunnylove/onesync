@@ -114,3 +114,85 @@ Finished in 506 ms
 
 - The focused suite already passed before adding the new Task 6 regression cases, so the red step here came from the newly added native-apply failure coverage rather than from an existing unchecked failure in older tests.
 - No placeholder `TODO` or `TBD` markers were introduced.
+
+## Fix Round: Fallback Lifecycle
+
+### Reviewer finding addressed
+
+- Root cause: native fallback cleanup only happened on successful manager-driven `applySharedBundleLocally(...)` calls.
+- Import and sync application use `applyBundleToBookmarks(...)` directly in native mode, so a previously saved `onesync.privateBookmarksNativeFallback` entry could survive a later successful native apply.
+- Resulting stale behavior: `loadPrivateManagerBundle(...)` could continue preferring the saved fallback bundle even after native bookmarks had been brought back into sync.
+
+### Fix applied
+
+- Moved successful native fallback cleanup into `applyBundleToBookmarks(...)` so all successful native apply paths clear the stale fallback, including import and sync application.
+- Kept the existing Task 6 partial-success behavior intact:
+  - failed native apply still saves fallback data
+  - failed native apply still reports `Shared data saved, browser bookmarks not updated: ...`
+
+### Focused red-green verification
+
+Focused command:
+
+```bash
+pnpm test tests/browser/private-bookmarks.test.ts tests/browser/bookmarks.test.ts
+```
+
+Red result before the fix:
+
+```text
+FAIL tests/browser/bookmarks.test.ts > bookmark adapter > clears native fallback state after a later successful native applyBundleToBookmarks run
+  expected storageSetMock to be called with { "onesync.privateBookmarksNativeFallback": null }
+
+FAIL tests/browser/private-bookmarks.test.ts > private manager carrier integration > stops preferring stale fallback data after a later successful native sync-style apply
+  expected synced bookmark from current native state, received undefined
+
+Test Files  2 failed (2)
+Tests       2 failed | 25 passed (27)
+```
+
+Green result after the fix:
+
+```text
+Test Files  2 passed (2)
+Tests       27 passed (27)
+Duration    952ms
+```
+
+### Fresh verification after the fix round
+
+TypeScript:
+
+```bash
+pnpm exec tsc --noEmit
+```
+
+```text
+PASS (exit code 0, no output)
+```
+
+Full tests:
+
+```bash
+pnpm test
+```
+
+```text
+Test Files  19 passed (19)
+Tests       108 passed (108)
+Duration    1.96s
+```
+
+Safari build:
+
+```bash
+pnpm build:safari
+```
+
+```text
+WXT 0.20.27
+Built safari-mv2 for production successfully
+background.js 115.32 kB
+Total size 299.81 kB
+Finished in 1.481 s
+```
