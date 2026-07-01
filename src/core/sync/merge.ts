@@ -183,8 +183,14 @@ export function mergeBundles(
       orderedChildren.push(childId);
     }
 
+    const mergedFolder = mergedNodes[folderId];
+
+    if (!mergedFolder || mergedFolder.type !== "folder") {
+      continue;
+    }
+
     mergedNodes[folderId] = {
-      ...mergedNodes[folderId],
+      ...mergedFolder,
       children: orderedChildren
     };
   }

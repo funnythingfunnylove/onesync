@@ -1,7 +1,10 @@
-import browser from "webextension-polyfill";
-import { applyBundleToBookmarks, listLocalBookmarks } from "../src/core/browser/bookmarks";
+import { browser } from "wxt/browser";
+import { applyBundleToBookmarks, applySharedBundleLocally, getBookmarkStorageMode, listLocalBookmarks } from "../src/core/browser/bookmarks";
+import { loadPrivateManagerBundle, savePrivateManagerBundle } from "../src/core/browser/private-bookmarks";
 import { setBaseSnapshot, setRecoverySnapshot } from "../src/core/browser/storage";
 import { appendActivityLog, getActivityLog } from "../src/core/state/activity-log";
+import { applyPrivateBookmarkOperation } from "../src/core/private-bookmarks/mutators";
+import { buildPrivateBookmarksViewState } from "../src/core/private-bookmarks/view-state";
 import { getConfig, setConfig } from "../src/core/state/config";
 import { getSyncConfigReadyError, validateSyncConfigForSync } from "../src/core/state/config-validation";
 import { getSyncState, setSyncState } from "../src/core/state/sync-state";
@@ -45,6 +48,20 @@ async function handleRuntimeMessage(message: RuntimeMessage): Promise<unknown> {
         getActivityLog()
       ]);
       return { config, syncState, activityLog };
+    }
+    case "onesync:get-private-bookmarks": {
+      const config = await getConfig();
+      const bundle = await loadPrivateManagerBundle(config);
+      return buildPrivateBookmarksViewState(bundle, getBookmarkStorageMode());
+    }
+    case "onesync:mutate-private-bookmarks": {
+      const config = await getConfig();
+      const mode = getBookmarkStorageMode();
+      const current = await loadPrivateManagerBundle(config);
+      const next = applyPrivateBookmarkOperation(current, message.payload.operation, config.deviceId);
+      const saved = await savePrivateManagerBundle(next);
+      await applySharedBundleLocally(saved, mode);
+      return buildPrivateBookmarksViewState(saved, mode);
     }
     case "onesync:save-config": {
       await setConfig(message.payload);

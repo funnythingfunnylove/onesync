@@ -5,15 +5,21 @@ const { sendMessageMock } = vi.hoisted(() => ({
   sendMessageMock: vi.fn()
 }));
 
-vi.mock("webextension-polyfill", () => ({
-  default: {
+vi.mock("wxt/browser", () => ({
+  browser: {
     runtime: {
       sendMessage: sendMessageMock
     }
   }
 }));
 
-import { requestOptionsConnectionCheck, requestOptionsSync, saveAndSyncOptionsConfig } from "../../src/ui/view-models/options";
+import {
+  loadPrivateBookmarksViewState,
+  mutatePrivateBookmarks,
+  requestOptionsConnectionCheck,
+  requestOptionsSync,
+  saveAndSyncOptionsConfig
+} from "../../src/ui/view-models/options";
 
 const sampleConfig: SyncConfig = {
   deviceId: "device-1",
@@ -37,6 +43,38 @@ describe("options view-model", () => {
 
     expect(sendMessageMock).toHaveBeenCalledWith({
       type: "onesync:sync-now"
+    });
+  });
+
+  it("loads the private bookmark manager state from the background runtime", async () => {
+    sendMessageMock.mockResolvedValue({
+      itemCount: 3,
+      selectedFolderId: "toolbar-root"
+    });
+
+    await expect(loadPrivateBookmarksViewState()).resolves.toMatchObject({
+      itemCount: 3
+    });
+
+    expect(sendMessageMock).toHaveBeenCalledWith({
+      type: "onesync:get-private-bookmarks"
+    });
+  });
+
+  it("sends private bookmark mutations through the service worker", async () => {
+    await mutatePrivateBookmarks({
+      type: "delete-node",
+      nodeId: "bookmark-1"
+    });
+
+    expect(sendMessageMock).toHaveBeenCalledWith({
+      type: "onesync:mutate-private-bookmarks",
+      payload: {
+        operation: {
+          type: "delete-node",
+          nodeId: "bookmark-1"
+        }
+      }
     });
   });
 

@@ -1,16 +1,28 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { browserMock, getTreeMock, createMock, removeMock, removeTreeMock } = vi.hoisted(() => {
+const {
+  browserMock,
+  getTreeMock,
+  createMock,
+  removeMock,
+  removeTreeMock,
+  storageGetMock,
+  storageSetMock
+} = vi.hoisted(() => {
   const getTreeMock = vi.fn();
   const createMock = vi.fn();
   const removeMock = vi.fn();
   const removeTreeMock = vi.fn();
+  const storageGetMock = vi.fn();
+  const storageSetMock = vi.fn();
 
   return {
     getTreeMock,
     createMock,
     removeMock,
     removeTreeMock,
+    storageGetMock,
+    storageSetMock,
     browserMock: {
       bookmarks: {
         getTree: getTreeMock,
@@ -20,28 +32,43 @@ const { browserMock, getTreeMock, createMock, removeMock, removeTreeMock } = vi.
       },
       storage: {
         local: {
-          async get() {
-            return {};
-          },
-          async set() {
-            return;
-          }
+          get: storageGetMock,
+          set: storageSetMock
         }
       }
     }
   };
 });
 
-vi.mock("webextension-polyfill", () => ({ default: browserMock }));
+vi.mock("wxt/browser", () => ({ browser: browserMock }));
 
-import { applyBundleToBookmarks, listLocalBookmarks } from "../../src/core/browser/bookmarks";
+import {
+  applySharedBundleLocally,
+  applyBundleToBookmarks,
+  getBookmarkStorageMode,
+  listLocalBookmarks
+} from "../../src/core/browser/bookmarks";
 
 beforeEach(() => {
   vi.useRealTimers();
+  browserMock.bookmarks = {
+    getTree: getTreeMock,
+    create: createMock,
+    remove: removeMock,
+    removeTree: removeTreeMock
+  };
   getTreeMock.mockReset();
   createMock.mockReset();
   removeMock.mockReset();
   removeTreeMock.mockReset();
+  storageGetMock.mockReset();
+  storageSetMock.mockReset();
+  browserMock.storage = {
+    local: {
+      get: storageGetMock,
+      set: storageSetMock
+    }
+  };
 
   getTreeMock.mockResolvedValue([
     {
@@ -72,6 +99,8 @@ beforeEach(() => {
       ]
     }
   ]);
+  storageGetMock.mockResolvedValue({});
+  storageSetMock.mockResolvedValue(undefined);
 
   let createdIndex = 0;
   createMock.mockImplementation(async (payload: { parentId?: string; title?: string; url?: string }) => {
@@ -84,6 +113,16 @@ beforeEach(() => {
 });
 
 describe("bookmark adapter", () => {
+  it("reports native bookmark mode when the runtime exposes the bookmarks api", () => {
+    expect(getBookmarkStorageMode()).toBe("native");
+  });
+
+  it("reports private bookmark mode when the runtime falls back to extension storage", () => {
+    (browserMock as { bookmarks?: unknown }).bookmarks = undefined;
+
+    expect(getBookmarkStorageMode()).toBe("private");
+  });
+
   it("returns a canonical bundle with semantic roots and bookmark nodes", async () => {
     const progressUpdates: Array<{ processed: number; total: number }> = [];
 
@@ -158,6 +197,43 @@ describe("bookmark adapter", () => {
     });
   });
 
+  it("maps Safari-style favorites and bookmarks menu roots even when order differs", async () => {
+    getTreeMock.mockResolvedValueOnce([
+      {
+        id: "root",
+        title: "",
+        children: [
+          {
+            id: "menu-root",
+            title: "Bookmarks Menu",
+            children: []
+          },
+          {
+            id: "favorites-root",
+            title: "Favorites",
+            children: []
+          }
+        ]
+      }
+    ]);
+
+    const bundle = await listLocalBookmarks({
+      deviceId: "device-1",
+      webdavUrl: "",
+      username: "",
+      password: "",
+      basePath: "/onesync",
+      intervalMinutes: 15,
+      scheduledSyncEnabled: false,
+      allowInsecureHttp: false
+    });
+
+    expect(bundle.roots.toolbar).toBe("favorites-root");
+    expect(bundle.roots.menu).toBe("menu-root");
+    expect(bundle.roots.mobile).toBe("onesync.synthetic.mobile");
+    expect(bundle.roots.unfiled).toBe("onesync.synthetic.unfiled");
+  });
+
   it("adds context when reading local bookmark roots fails", async () => {
     getTreeMock.mockRejectedValueOnce(new Error("Node cannot be found in the current page."));
 
@@ -173,6 +249,307 @@ describe("bookmark adapter", () => {
         allowInsecureHttp: false
       })
     ).rejects.toThrow(/failed to enumerate local bookmark roots/i);
+  });
+
+  it("reads the private bookmark bundle from extension storage when the runtime does not expose bookmarks", async () => {
+    storageGetMock.mockResolvedValueOnce({
+      "onesync.privateBookmarks": {
+        kind: "onesync.bookmarks",
+        schemaVersion: 1,
+        revision: "2026-07-01T00:00:00.000Z#remote-device#private",
+        deviceId: "remote-device",
+        generatedAt: "2026-07-01T00:00:00.000Z",
+        roots: {
+          toolbar: "private-toolbar",
+          menu: "private-menu",
+          mobile: "private-mobile",
+          unfiled: "private-unfiled"
+        },
+        nodes: {
+          "private-toolbar": {
+            id: "private-toolbar",
+            type: "folder",
+            title: "Bookmarks Bar",
+            children: ["private-bookmark"],
+            addedAt: "2026-07-01T00:00:00.000Z",
+            updatedAt: "2026-07-01T00:00:00.000Z"
+          },
+          "private-menu": {
+            id: "private-menu",
+            type: "folder",
+            title: "Bookmarks Menu",
+            children: [],
+            addedAt: "2026-07-01T00:00:00.000Z",
+            updatedAt: "2026-07-01T00:00:00.000Z"
+          },
+          "private-mobile": {
+            id: "private-mobile",
+            type: "folder",
+            title: "Mobile Bookmarks",
+            children: [],
+            addedAt: "2026-07-01T00:00:00.000Z",
+            updatedAt: "2026-07-01T00:00:00.000Z"
+          },
+          "private-unfiled": {
+            id: "private-unfiled",
+            type: "folder",
+            title: "Unfiled Bookmarks",
+            children: [],
+            addedAt: "2026-07-01T00:00:00.000Z",
+            updatedAt: "2026-07-01T00:00:00.000Z"
+          },
+          "private-bookmark": {
+            id: "private-bookmark",
+            type: "bookmark",
+            title: "Private Bookmark",
+            url: "https://private.example.com/",
+            addedAt: "2026-07-01T00:00:00.000Z",
+            updatedAt: "2026-07-01T00:00:00.000Z"
+          }
+        },
+        tombstones: [],
+        meta: {
+          client: "onesync",
+          clientVersion: "0.1.3"
+        }
+      }
+    });
+    (browserMock as { bookmarks?: unknown }).bookmarks = undefined;
+
+    const bundle = await listLocalBookmarks({
+      deviceId: "device-1",
+      webdavUrl: "",
+      username: "",
+      password: "",
+      basePath: "/onesync",
+      intervalMinutes: 15,
+      scheduledSyncEnabled: false,
+      allowInsecureHttp: false
+    });
+
+    expect(bundle.nodes["private-bookmark"]).toMatchObject({
+      id: "private-bookmark",
+      title: "Private Bookmark",
+      url: "https://private.example.com/"
+    });
+    expect(bundle.deviceId).toBe("device-1");
+    expect(bundle.revision).toMatch(/#device-1#snapshot$/);
+    expect(storageGetMock).toHaveBeenCalledWith("onesync.privateBookmarks");
+  });
+
+  it("writes the private bookmark bundle to extension storage when the runtime does not expose bookmarks", async () => {
+    (browserMock as { bookmarks?: unknown }).bookmarks = undefined;
+
+    await expect(
+      applyBundleToBookmarks({
+        kind: "onesync.bookmarks",
+        schemaVersion: 1,
+        revision: "2026-07-01T00:00:00.000Z#device-1#private",
+        deviceId: "device-1",
+        generatedAt: "2026-07-01T00:00:00.000Z",
+        roots: {
+          toolbar: "private-toolbar",
+          menu: "private-menu",
+          mobile: "private-mobile",
+          unfiled: "private-unfiled"
+        },
+        nodes: {
+          "private-toolbar": {
+            id: "private-toolbar",
+            type: "folder",
+            title: "Bookmarks Bar",
+            children: ["private-bookmark"],
+            addedAt: "2026-07-01T00:00:00.000Z",
+            updatedAt: "2026-07-01T00:00:00.000Z"
+          },
+          "private-menu": {
+            id: "private-menu",
+            type: "folder",
+            title: "Bookmarks Menu",
+            children: [],
+            addedAt: "2026-07-01T00:00:00.000Z",
+            updatedAt: "2026-07-01T00:00:00.000Z"
+          },
+          "private-mobile": {
+            id: "private-mobile",
+            type: "folder",
+            title: "Mobile Bookmarks",
+            children: [],
+            addedAt: "2026-07-01T00:00:00.000Z",
+            updatedAt: "2026-07-01T00:00:00.000Z"
+          },
+          "private-unfiled": {
+            id: "private-unfiled",
+            type: "folder",
+            title: "Unfiled Bookmarks",
+            children: [],
+            addedAt: "2026-07-01T00:00:00.000Z",
+            updatedAt: "2026-07-01T00:00:00.000Z"
+          },
+          "private-bookmark": {
+            id: "private-bookmark",
+            type: "bookmark",
+            title: "Private Bookmark",
+            url: "https://private.example.com/",
+            addedAt: "2026-07-01T00:00:00.000Z",
+            updatedAt: "2026-07-01T00:00:00.000Z"
+          }
+        },
+        tombstones: [],
+        meta: {
+          client: "onesync",
+          clientVersion: "0.1.3"
+        }
+      })
+    ).resolves.toBeUndefined();
+
+    expect(storageSetMock).toHaveBeenCalledWith({
+      "onesync.privateBookmarks": expect.objectContaining({
+        roots: {
+          toolbar: "private-toolbar",
+          menu: "private-menu",
+          mobile: "private-mobile",
+          unfiled: "private-unfiled"
+        }
+      })
+    });
+    expect(createMock).not.toHaveBeenCalled();
+    expect(removeMock).not.toHaveBeenCalled();
+    expect(removeTreeMock).not.toHaveBeenCalled();
+  });
+
+  it("re-applies shared bundles through the existing private bookmark fallback", async () => {
+    (browserMock as { bookmarks?: unknown }).bookmarks = undefined;
+
+    await expect(
+      applySharedBundleLocally(
+        {
+          kind: "onesync.bookmarks",
+          schemaVersion: 1,
+          revision: "2026-07-01T00:00:00.000Z#device-1#private",
+          deviceId: "device-1",
+          generatedAt: "2026-07-01T00:00:00.000Z",
+          roots: {
+            toolbar: "private-toolbar",
+            menu: "private-menu",
+            mobile: "private-mobile",
+            unfiled: "private-unfiled"
+          },
+          nodes: {
+            "private-toolbar": {
+              id: "private-toolbar",
+              type: "folder",
+              title: "Bookmarks Bar",
+              children: ["private-bookmark"],
+              addedAt: "2026-07-01T00:00:00.000Z",
+              updatedAt: "2026-07-01T00:00:00.000Z"
+            },
+            "private-menu": {
+              id: "private-menu",
+              type: "folder",
+              title: "Bookmarks Menu",
+              children: [],
+              addedAt: "2026-07-01T00:00:00.000Z",
+              updatedAt: "2026-07-01T00:00:00.000Z"
+            },
+            "private-mobile": {
+              id: "private-mobile",
+              type: "folder",
+              title: "Mobile Bookmarks",
+              children: [],
+              addedAt: "2026-07-01T00:00:00.000Z",
+              updatedAt: "2026-07-01T00:00:00.000Z"
+            },
+            "private-unfiled": {
+              id: "private-unfiled",
+              type: "folder",
+              title: "Unfiled Bookmarks",
+              children: [],
+              addedAt: "2026-07-01T00:00:00.000Z",
+              updatedAt: "2026-07-01T00:00:00.000Z"
+            },
+            "private-bookmark": {
+              id: "private-bookmark",
+              type: "bookmark",
+              title: "Private Bookmark",
+              url: "https://private.example.com/",
+              addedAt: "2026-07-01T00:00:00.000Z",
+              updatedAt: "2026-07-01T00:00:00.000Z"
+            }
+          },
+          tombstones: [],
+          meta: {
+            client: "onesync",
+            clientVersion: "0.1.3"
+          }
+        },
+        "private"
+      )
+    ).resolves.toBeUndefined();
+
+    expect(storageSetMock).toHaveBeenCalledWith({
+      "onesync.privateBookmarks": expect.objectContaining({
+        roots: {
+          toolbar: "private-toolbar",
+          menu: "private-menu",
+          mobile: "private-mobile",
+          unfiled: "private-unfiled"
+        }
+      })
+    });
+  });
+
+  it("creates an empty private bookmark bundle when storage has no Safari fallback data yet", async () => {
+    storageGetMock.mockResolvedValueOnce({});
+    (browserMock as { bookmarks?: unknown }).bookmarks = undefined;
+
+    const bundle = await listLocalBookmarks({
+      deviceId: "device-1",
+      webdavUrl: "",
+      username: "",
+      password: "",
+      basePath: "/onesync",
+      intervalMinutes: 15,
+      scheduledSyncEnabled: false,
+      allowInsecureHttp: false
+    });
+
+    expect(bundle.roots.toolbar).toBe("onesync.synthetic.toolbar");
+    expect(bundle.roots.menu).toBe("onesync.synthetic.menu");
+    expect(bundle.roots.mobile).toBe("onesync.synthetic.mobile");
+    expect(bundle.roots.unfiled).toBe("onesync.synthetic.unfiled");
+    expect(bundle.nodes["onesync.synthetic.toolbar"]).toMatchObject({
+      title: "Bookmarks Bar",
+      children: []
+    });
+    expect(storageSetMock).toHaveBeenCalledWith({
+      "onesync.privateBookmarks": expect.objectContaining({
+        roots: {
+          toolbar: "onesync.synthetic.toolbar",
+          menu: "onesync.synthetic.menu",
+          mobile: "onesync.synthetic.mobile",
+          unfiled: "onesync.synthetic.unfiled"
+        }
+      })
+    });
+  });
+
+  it("still fails clearly when neither bookmarks nor storage are available", async () => {
+    (browserMock as { bookmarks?: unknown }).bookmarks = undefined;
+    browserMock.storage = undefined as unknown as typeof browserMock.storage;
+
+    await expect(
+      listLocalBookmarks({
+        deviceId: "device-1",
+        webdavUrl: "",
+        username: "",
+        password: "",
+        basePath: "/onesync",
+        intervalMinutes: 15,
+        scheduledSyncEnabled: false,
+        allowInsecureHttp: false
+      })
+    ).rejects.toThrow(/bookmarks api is unavailable/i);
   });
 
   it("clears existing native children and recreates bundle children under the matching browser roots", async () => {

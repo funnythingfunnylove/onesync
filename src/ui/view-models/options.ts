@@ -1,9 +1,10 @@
-import browser from "webextension-polyfill";
+import { browser } from "wxt/browser";
 import type { SyncConfig } from "../../core/state/config";
 import { validateSyncConfigForSync } from "../../core/state/config-validation";
-import type { RuntimeMessage } from "../../core/shared/types";
+import type { PrivateBookmarkOperation, RuntimeMessage } from "../../core/shared/types";
 import type { ActivityLogEntry } from "../../core/state/activity-log";
 import type { SyncState } from "../../core/state/sync-state";
+import type { PrivateBookmarksViewState } from "../../core/private-bookmarks/view-state";
 import { requestSyncTrigger } from "./sync-trigger";
 
 export type OptionsViewModel = {
@@ -21,6 +22,19 @@ export async function loadOptionsViewModel(): Promise<OptionsViewModel> {
   return (await browser.runtime.sendMessage({
     type: "onesync:get-options-state"
   } satisfies RuntimeMessage)) as OptionsViewModel;
+}
+
+export async function loadPrivateBookmarksViewState(): Promise<PrivateBookmarksViewState> {
+  return (await browser.runtime.sendMessage({
+    type: "onesync:get-private-bookmarks"
+  } satisfies RuntimeMessage)) as PrivateBookmarksViewState;
+}
+
+export async function mutatePrivateBookmarks(operation: PrivateBookmarkOperation): Promise<PrivateBookmarksViewState> {
+  return (await browser.runtime.sendMessage({
+    type: "onesync:mutate-private-bookmarks",
+    payload: { operation }
+  } satisfies RuntimeMessage)) as PrivateBookmarksViewState;
 }
 
 export async function saveOptionsConfig(config: SyncConfig): Promise<void> {
