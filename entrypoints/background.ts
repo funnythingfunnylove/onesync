@@ -1,5 +1,5 @@
 import { browser } from "wxt/browser";
-import { applyBundleToBookmarks, applySharedBundleLocally, getBookmarkStorageMode, listLocalBookmarks } from "../src/core/browser/bookmarks";
+import { applyBundleToBookmarks, getBookmarkStorageMode, listLocalBookmarks } from "../src/core/browser/bookmarks";
 import { loadPrivateManagerBundle, savePrivateManagerBundle } from "../src/core/browser/private-bookmarks";
 import { setBaseSnapshot, setRecoverySnapshot } from "../src/core/browser/storage";
 import { appendActivityLog, getActivityLog } from "../src/core/state/activity-log";
@@ -59,8 +59,7 @@ async function handleRuntimeMessage(message: RuntimeMessage): Promise<unknown> {
       const mode = getBookmarkStorageMode();
       const current = await loadPrivateManagerBundle(config);
       const next = applyPrivateBookmarkOperation(current, message.payload.operation, config.deviceId);
-      const saved = await savePrivateManagerBundle(next);
-      await applySharedBundleLocally(saved, mode);
+      const saved = await savePrivateManagerBundle(config, next, mode);
       return buildPrivateBookmarksViewState(saved, mode);
     }
     case "onesync:save-config": {
