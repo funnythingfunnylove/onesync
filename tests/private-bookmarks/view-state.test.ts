@@ -92,6 +92,21 @@ describe("private bookmark view-state", () => {
     expect(state.itemCount).toBe(3);
     expect(state.modeHint).toBe("This is your primary local bookmark workspace.");
     expect(state.currentFolder?.children.length).toBeGreaterThan(0);
+    expect(state.currentFolder?.children).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "folder-a",
+          type: "folder",
+          children: []
+        }),
+        expect.objectContaining({
+          id: "bookmark-1",
+          type: "bookmark",
+          children: []
+        })
+      ])
+    );
+    expect(JSON.stringify(state.currentFolder)).not.toContain("bookmark-2");
     expect(state.folders[0]).toMatchObject({
       id: bundle.roots.toolbar,
       depth: 0,
@@ -116,5 +131,13 @@ describe("private bookmark view-state", () => {
         expect.objectContaining({ id: "bookmark-1", type: "bookmark" })
       ])
     });
+  });
+
+  it("reports an explicit hint when bookmark access is unavailable", () => {
+    const bundle = createBundle();
+    const state = buildPrivateBookmarksViewState(bundle, "unavailable");
+
+    expect(state.mode).toBe("unavailable");
+    expect(state.modeHint).toBe("Bookmark access is unavailable in this browser runtime.");
   });
 });

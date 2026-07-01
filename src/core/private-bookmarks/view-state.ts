@@ -86,6 +86,44 @@ function projectNode(bundle: BookmarkBundle, nodeId: string, depth: number, visi
   };
 }
 
+function projectFolderChild(
+  bundle: BookmarkBundle,
+  nodeId: string,
+  depth: number,
+  visited: Set<string>
+): PrivateBookmarkViewNode | null {
+  if (visited.has(nodeId)) {
+    return null;
+  }
+
+  const node = bundle.nodes[nodeId];
+
+  if (!node) {
+    return null;
+  }
+
+  visited.add(nodeId);
+
+  if (node.type === "bookmark") {
+    return {
+      id: node.id,
+      type: node.type,
+      title: node.title,
+      url: node.url,
+      depth,
+      children: []
+    };
+  }
+
+  return {
+    id: node.id,
+    type: node.type,
+    title: node.title,
+    depth,
+    children: []
+  };
+}
+
 function collectFolderEntries(
   bundle: BookmarkBundle,
   nodeId: string,
@@ -169,7 +207,7 @@ function buildCurrentFolder(bundle: BookmarkBundle, selectedFolderId: string): P
   const visited = new Set<string>([folder.id]);
 
   for (const childId of folder.children) {
-    const child = projectNode(bundle, childId, 1, visited);
+    const child = projectFolderChild(bundle, childId, 1, visited);
 
     if (child) {
       children.push(child);
@@ -199,7 +237,9 @@ export function buildPrivateBookmarksViewState(
     modeHint:
       mode === "private"
         ? "This is your primary local bookmark workspace."
-        : "Changes here update shared data and are applied back to browser bookmarks.",
+        : mode === "native"
+          ? "Changes here update shared data and are applied back to browser bookmarks."
+          : "Bookmark access is unavailable in this browser runtime.",
     folders: buildFolderList(bundle),
     tree: buildTree(bundle),
     currentFolder: buildCurrentFolder(bundle, resolvedSelectedFolderId)
