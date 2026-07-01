@@ -50,13 +50,20 @@ function renderActivityLog(items: Array<{ createdAt: string; level: string; mess
     <ul class="activity-list">
       ${items
         .map(
-          (item) => `
-            <li class="activity-item">
-              <strong>${escapeHtml(item.level.toUpperCase())}</strong>
+          (item) => {
+            const level = item.level.toLowerCase();
+            const activityLevel = level === "error" || level === "warning" || level === "success" ? level : "info";
+
+            return `
+            <li class="activity-item activity-item-${activityLevel}" data-activity-level="${escapeHtml(activityLevel)}">
+              <div class="activity-item-meta">
+                <strong class="activity-level activity-level-${activityLevel}">${escapeHtml(activityLevel.toUpperCase())}</strong>
+                <time>${escapeHtml(new Date(item.createdAt).toLocaleString())}</time>
+              </div>
               <span>${escapeHtml(item.message)}</span>
-              <time>${escapeHtml(new Date(item.createdAt).toLocaleString())}</time>
             </li>
-          `
+          `;
+          }
         )
         .join("")}
     </ul>
@@ -351,6 +358,10 @@ async function renderOptionsPage(privateBookmarksStateOverride?: Awaited<ReturnT
         </div>
         <section class="nav-status-card nav-status-card-${syncOverview.tone}">
           <span class="status-pill status-pill-${syncOverview.tone}">${escapeHtml(syncOverview.badge)}</span>
+          <p class="nav-status-line">
+            <span>Status</span>
+            <strong>${escapeHtml(syncStateLabel)}</strong>
+          </p>
           <h2>${escapeHtml(syncOverview.heading)}</h2>
           ${syncOverview.note ? `<p class="nav-status-copy">${escapeHtml(syncOverview.note)}</p>` : ""}
           ${
@@ -615,11 +626,11 @@ async function renderOptionsPage(privateBookmarksStateOverride?: Awaited<ReturnT
             <p class="section-copy">${bundleHeadingCopy}</p>
           </div>
           <section class="content-card bundle-card">
-              <div class="tool-actions">
-                <button id="export-bundle" class="secondary-button" type="button">Export bundle</button>
-                <button id="import-bundle" class="secondary-button" type="button">Import bundle</button>
-              </div>
-              <textarea id="bundle-json" class="bundle-textarea" placeholder="Encoded bundle JSON appears here"></textarea>
+            <div class="tool-actions">
+              <button id="export-bundle" class="secondary-button" type="button">Export bundle</button>
+              <button id="import-bundle" class="secondary-button" type="button">Import bundle</button>
+            </div>
+            <textarea id="bundle-json" class="bundle-textarea" placeholder="Encoded bundle JSON appears here"></textarea>
           </section>
         </section>
 

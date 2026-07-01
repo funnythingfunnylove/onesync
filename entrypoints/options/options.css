@@ -116,7 +116,6 @@ a {
 .field-group span,
 .private-node-type,
 .nav-meta-item span,
-.activity-item strong,
 .bookmark-pane-kicker,
 .bookmark-context-chip span,
 .inspector-section span,
@@ -158,6 +157,24 @@ a {
   gap: 10px;
   padding: 14px;
   background: var(--surface-muted);
+}
+
+.nav-status-line {
+  display: grid;
+  gap: 3px;
+}
+
+.nav-status-line span {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.nav-status-line strong {
+  color: var(--text);
+  line-height: 1.3;
 }
 
 .status-pill {
@@ -673,13 +690,27 @@ a {
   grid-template-columns: auto 1fr;
   gap: 8px;
   align-items: center;
-  padding: 2px 0;
+  padding: 6px 8px;
+  margin: 0 -8px;
+  border-radius: var(--radius-md);
 }
 
 .checkbox-row input {
   width: 16px;
   height: 16px;
   accent-color: var(--blue-text);
+  border-radius: 4px;
+}
+
+.checkbox-row:focus-within {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  background: var(--surface-muted);
+}
+
+.checkbox-row input:focus-visible {
+  outline: 2px solid var(--blue-text);
+  outline-offset: 2px;
 }
 
 .actions,
@@ -738,17 +769,61 @@ a {
 
 .activity-item {
   display: grid;
-  gap: 2px;
+  gap: 4px;
   padding: 10px 12px;
   border-bottom: 1px solid var(--border);
+  border-left: 3px solid transparent;
+}
+
+.activity-item-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+}
+
+.activity-level {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.activity-level-info {
+  color: var(--blue-text);
+}
+
+.activity-level-warning {
+  color: var(--yellow-text);
+}
+
+.activity-level-error {
+  color: var(--red-text);
+}
+
+.activity-level-success {
+  color: var(--green-text);
+}
+
+.activity-item[data-activity-level="info"] {
+  border-left-color: var(--blue-text);
+}
+
+.activity-item[data-activity-level="warning"] {
+  border-left-color: var(--yellow-text);
+}
+
+.activity-item[data-activity-level="error"] {
+  border-left-color: var(--red-text);
+}
+
+.activity-item[data-activity-level="success"] {
+  border-left-color: var(--green-text);
 }
 
 .activity-item:last-child {
   border-bottom: none;
-}
-
-.activity-item strong {
-  color: var(--blue-text);
 }
 
 .empty-state {
