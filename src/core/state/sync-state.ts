@@ -1,4 +1,4 @@
-import browser from "webextension-polyfill";
+import { browser } from "wxt/browser";
 
 export type SyncStatus = "idle" | "running" | "uploaded" | "downloaded" | "merged" | "error";
 export type SyncProgressPhase =

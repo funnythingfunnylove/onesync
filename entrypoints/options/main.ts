@@ -1,5 +1,6 @@
 import { browser } from "wxt/browser";
 import { getBookmarkStorageMode } from "../../src/core/browser/bookmarks";
+import type { PrivateBookmarkViewNode } from "../../src/core/private-bookmarks/view-state";
 import type { SyncConfig } from "../../src/core/state/config";
 import type { PrivateBookmarkOperation, PrivateBookmarkTab } from "../../src/core/shared/types";
 import { getBookmarkSourceDescription, getBookmarkSourceLabel } from "../../src/ui/bookmark-source";
@@ -13,7 +14,8 @@ import {
   requestOptionsConnectionCheck,
   requestOptionsSync,
   saveAndSyncOptionsConfig,
-  saveOptionsConfig
+  saveOptionsConfig,
+  validatePrivateBookmarkUrl
 } from "../../src/ui/view-models/options";
 import {
   formatSyncProgressLabel,
@@ -28,6 +30,7 @@ let refreshHandle: number | null = null;
 let privateTab: PrivateBookmarkTab = "folders";
 let selectedPrivateFolderId: string | null = null;
 let selectedPrivateNodeId: string | null = null;
+const collapsedPrivateFolderIds = new Set<string>();
 
 function escapeHtml(value: string): string {
   return value
@@ -88,34 +91,94 @@ function renderPrivateFolderList(
 }
 
 function renderPrivateVisibleNodes(
-  nodes: Array<{ id: string; title: string; type: string; url?: string; depth: number; isSelected: boolean }>
+  nodes: Array<{
+    id: string;
+    title: string;
+    type: string;
+    url?: string;
+    depth: number;
+    isSelected: boolean;
+    isCollapsible: boolean;
+    isExpanded: boolean;
+  }>,
+  activeTab: PrivateBookmarkTab
 ): string {
   if (nodes.length === 0) {
     return `<p class="empty-state">Nothing is in this folder yet.</p>`;
   }
+
+  const treeMode = activeTab === "tree";
 
   return `
     <div class="private-node-list" role="list">
       ${nodes
         .map(
           (node) => `
-            <button
-              type="button"
-              class="private-node-button ${node.isSelected ? "is-selected" : ""}"
-              data-private-node-id="${escapeHtml(node.id)}"
+            <div
+              class="private-node-row ${treeMode ? "is-tree-row" : ""}"
               style="--private-depth:${node.depth};"
             >
-              <span class="private-node-header">
-                <span class="private-node-type">${node.type === "folder" ? "Folder" : "Bookmark"}</span>
-                <strong>${escapeHtml(node.title)}</strong>
-              </span>
-              ${node.url ? `<span class="private-node-meta">${escapeHtml(node.url)}</span>` : ""}
-            </button>
+              ${
+                treeMode
+                  ? node.isCollapsible
+                    ? `
+                      <button
+                        type="button"
+                        class="private-disclosure-button"
+                        data-private-toggle-folder-id="${escapeHtml(node.id)}"
+                        aria-label="${node.isExpanded ? "Collapse" : "Expand"} ${escapeHtml(node.title)}"
+                        aria-expanded="${node.isExpanded ? "true" : "false"}"
+                      >
+                        ${node.isExpanded ? "▾" : "▸"}
+                      </button>
+                    `
+                    : `<span class="private-disclosure-spacer" aria-hidden="true"></span>`
+                  : ""
+              }
+              <button
+                type="button"
+                class="private-node-button ${node.isSelected ? "is-selected" : ""}"
+                data-private-node-id="${escapeHtml(node.id)}"
+              >
+                <span class="private-node-header">
+                  <span class="private-node-type">${node.type === "folder" ? "Folder" : "Bookmark"}</span>
+                  <strong>${escapeHtml(node.title)}</strong>
+                </span>
+                ${node.url ? `<span class="private-node-meta">${escapeHtml(node.url)}</span>` : ""}
+              </button>
+            </div>
           `
         )
         .join("")}
     </div>
   `;
+}
+
+function treeContainsNode(
+  nodes: PrivateBookmarkViewNode[],
+  nodeId: string
+): boolean {
+  return nodes.some((node) => {
+    if (node.id === nodeId) {
+      return true;
+    }
+
+    return treeContainsNode(node.children, nodeId);
+  });
+}
+
+function folderContainsSelectedNode(
+  nodes: PrivateBookmarkViewNode[],
+  folderId: string,
+  nodeId: string
+): boolean {
+  const folder = nodes.find((node) => node.id === folderId);
+
+  if (folder) {
+    return treeContainsNode(folder.children, nodeId);
+  }
+
+  return nodes.some((node) => folderContainsSelectedNode(node.children, folderId, nodeId));
 }
 
 function readConfigFromForm(form: HTMLFormElement, previousConfig: SyncConfig): SyncConfig {
@@ -183,7 +246,8 @@ async function renderOptionsPage(privateBookmarksStateOverride?: Awaited<ReturnT
   const privateBookmarkManager = buildPrivateBookmarkManagerViewModel(privateBookmarksState, {
     activeTab: privateTab,
     selectedFolderId: selectedPrivateFolderId ?? undefined,
-    selectedNodeId: selectedPrivateNodeId ?? undefined
+    selectedNodeId: selectedPrivateNodeId ?? undefined,
+    collapsedFolderIds: collapsedPrivateFolderIds
   });
 
   selectedPrivateFolderId = privateBookmarkManager.selectedFolder?.id ?? null;
@@ -231,91 +295,94 @@ async function renderOptionsPage(privateBookmarksStateOverride?: Awaited<ReturnT
           : ""
       }
 
-      <section class="section private-manager-section" id="private-bookmark-manager">
-        <div class="section-header">
-          <div>
-            <h2>Private bookmarks</h2>
-            <p class="helper">${escapeHtml(privateBookmarkManager.modeHint)}</p>
+      <div class="workspace-grid">
+        <section class="section private-manager-section" id="private-bookmark-manager">
+          <div class="section-header">
+            <div>
+              <h2>Private bookmarks</h2>
+              <p class="helper">${escapeHtml(privateBookmarkManager.modeHint)}</p>
+            </div>
+            <div class="section-badge">
+              <span>${escapeHtml(String(privateBookmarkManager.itemCount))} items</span>
+              <strong>${escapeHtml(bookmarkSourceLabel)}</strong>
+            </div>
           </div>
-          <div class="section-badge">
-            <span>${escapeHtml(String(privateBookmarkManager.itemCount))} items</span>
-            <strong>${escapeHtml(bookmarkSourceLabel)}</strong>
+
+          <div class="private-controls">
+            <button type="button" class="secondary-button" data-private-action="create-folder" ${privateBookmarkManager.actions.createFolder.disabled ? "disabled" : ""}>
+              ${escapeHtml(privateBookmarkManager.actions.createFolder.label)}
+            </button>
+            <button type="button" class="secondary-button" data-private-action="create-bookmark" ${privateBookmarkManager.actions.createBookmark.disabled ? "disabled" : ""}>
+              ${escapeHtml(privateBookmarkManager.actions.createBookmark.label)}
+            </button>
+            <button type="button" class="secondary-button" data-private-action="rename" ${privateBookmarkManager.actions.rename.disabled ? "disabled" : ""}>
+              ${escapeHtml(privateBookmarkManager.actions.rename.label)}
+            </button>
+            <label class="private-move-control">
+              <span>Move to</span>
+              <select id="private-move-destination" ${privateBookmarkManager.actions.move.disabled ? "disabled" : ""}>
+                ${privateBookmarkManager.moveDestinations
+                  .map(
+                    (folder) => `
+                      <option value="${escapeHtml(folder.id)}" ${folder.isSelected ? "selected" : ""}>
+                        ${"&nbsp;&nbsp;".repeat(folder.depth)}${escapeHtml(folder.title)}
+                      </option>
+                    `
+                  )
+                  .join("")}
+              </select>
+            </label>
+            <button type="button" class="secondary-button" data-private-action="move" ${privateBookmarkManager.actions.move.disabled ? "disabled" : ""}>
+              ${escapeHtml(privateBookmarkManager.actions.move.label)}
+            </button>
+            <button type="button" class="secondary-button danger-button" data-private-action="delete" ${privateBookmarkManager.actions.delete.disabled ? "disabled" : ""}>
+              ${escapeHtml(privateBookmarkManager.actions.delete.label)}
+            </button>
           </div>
-        </div>
 
-        <div class="private-controls">
-          <button type="button" class="secondary-button" data-private-action="create-folder" ${privateBookmarkManager.actions.createFolder.disabled ? "disabled" : ""}>
-            ${escapeHtml(privateBookmarkManager.actions.createFolder.label)}
-          </button>
-          <button type="button" class="secondary-button" data-private-action="create-bookmark" ${privateBookmarkManager.actions.createBookmark.disabled ? "disabled" : ""}>
-            ${escapeHtml(privateBookmarkManager.actions.createBookmark.label)}
-          </button>
-          <button type="button" class="secondary-button" data-private-action="rename" ${privateBookmarkManager.actions.rename.disabled ? "disabled" : ""}>
-            ${escapeHtml(privateBookmarkManager.actions.rename.label)}
-          </button>
-          <label class="private-move-control">
-            <span>Move to</span>
-            <select id="private-move-destination" ${privateBookmarkManager.actions.move.disabled ? "disabled" : ""}>
-              ${privateBookmarkManager.moveDestinations
-                .map(
-                  (folder) => `
-                    <option value="${escapeHtml(folder.id)}" ${folder.isSelected ? "selected" : ""}>
-                      ${"&nbsp;&nbsp;".repeat(folder.depth)}${escapeHtml(folder.title)}
-                    </option>
-                  `
-                )
-                .join("")}
-            </select>
-          </label>
-          <button type="button" class="secondary-button" data-private-action="move" ${privateBookmarkManager.actions.move.disabled ? "disabled" : ""}>
-            ${escapeHtml(privateBookmarkManager.actions.move.label)}
-          </button>
-          <button type="button" class="secondary-button danger-button" data-private-action="delete" ${privateBookmarkManager.actions.delete.disabled ? "disabled" : ""}>
-            ${escapeHtml(privateBookmarkManager.actions.delete.label)}
-          </button>
-        </div>
+          <div class="private-layout">
+            <aside class="private-pane private-folder-pane">
+              <div class="pane-heading">
+                <h3>Folders</h3>
+                <p>${escapeHtml(privateBookmarkManager.selectedFolder?.title ?? "No folder selected")}</p>
+              </div>
+              ${renderPrivateFolderList(privateBookmarkManager.folderEntries)}
+            </aside>
 
-        <div class="private-layout">
-          <aside class="private-pane private-folder-pane">
-            <div class="pane-heading">
-              <h3>Folders</h3>
-              <p>${escapeHtml(privateBookmarkManager.selectedFolder?.title ?? "No folder selected")}</p>
-            </div>
-            ${renderPrivateFolderList(privateBookmarkManager.folderEntries)}
-          </aside>
+            <section class="private-pane private-content-pane">
+              <div class="private-pane-toolbar">
+                <div class="private-tabs" role="tablist" aria-label="Private bookmark views">
+                  ${privateBookmarkManager.tabs
+                    .map(
+                      (tab) => `
+                        <button
+                          type="button"
+                          role="tab"
+                          aria-selected="${tab.isActive ? "true" : "false"}"
+                          class="private-tab ${tab.isActive ? "is-active" : ""}"
+                          data-private-tab="${tab.id}"
+                        >
+                          ${escapeHtml(tab.label)}
+                        </button>
+                      `
+                    )
+                    .join("")}
+                </div>
 
-          <section class="private-pane private-content-pane">
-            <div class="private-tabs" role="tablist" aria-label="Private bookmark views">
-              ${privateBookmarkManager.tabs
-                .map(
-                  (tab) => `
-                    <button
-                      type="button"
-                      role="tab"
-                      aria-selected="${tab.isActive ? "true" : "false"}"
-                      class="private-tab ${tab.isActive ? "is-active" : ""}"
-                      data-private-tab="${tab.id}"
-                    >
-                      ${escapeHtml(tab.label)}
-                    </button>
-                  `
-                )
-                .join("")}
-            </div>
+                <div class="pane-heading pane-heading-compact">
+                  <h3>${privateBookmarkManager.activeTab === "folders" ? "Folder contents" : "Bookmark tree"}</h3>
+                  <p>${escapeHtml(privateBookmarkManager.selectedNode?.title ?? privateBookmarkManager.selectedFolder?.title ?? "Select a bookmark item to manage it.")}</p>
+                </div>
+              </div>
+              ${renderPrivateVisibleNodes(privateBookmarkManager.visibleNodes, privateBookmarkManager.activeTab)}
+            </section>
+          </div>
+        </section>
 
-            <div class="pane-heading">
-              <h3>${privateBookmarkManager.activeTab === "folders" ? "Folder contents" : "Bookmark tree"}</h3>
-              <p>${escapeHtml(privateBookmarkManager.selectedNode?.title ?? privateBookmarkManager.selectedFolder?.title ?? "Select a bookmark item to manage it.")}</p>
-            </div>
-            ${renderPrivateVisibleNodes(privateBookmarkManager.visibleNodes)}
-          </section>
-        </div>
-      </section>
-
-      <section class="section-grid">
-        <section class="section">
-          <h2>WebDAV</h2>
-          <form id="settings-form" class="form-grid">
+        <aside class="workspace-sidebar">
+          <section class="section section-compact">
+            <h2>WebDAV</h2>
+            <form id="settings-form" class="form-grid">
             <label>
               <span>WebDAV URL</span>
               <input name="webdavUrl" value="${escapeHtml(optionsViewModel.config.webdavUrl)}" placeholder="https://dav.example.com/" />
@@ -356,24 +423,25 @@ async function renderOptionsPage(privateBookmarksStateOverride?: Awaited<ReturnT
               <button id="check-connection" class="secondary-button" type="button">Check connection</button>
               <button id="sync-now" class="secondary-button" type="button" ${isRunning ? "disabled" : ""}>${isRunning ? "Syncing..." : "Sync now"}</button>
             </div>
-          </form>
-        </section>
+            </form>
+          </section>
 
-        <section class="section">
-          <h2>Bundle tools</h2>
-          <p class="helper">Export the current local bookmark snapshot as an encoded OneSync bundle, or import an encoded bundle and apply it to ${escapeHtml(bookmarkSourceLabel.toLowerCase())}.</p>
-          <div class="tool-actions">
-            <button id="export-bundle" class="secondary-button" type="button">Export bundle</button>
-            <button id="import-bundle" class="secondary-button" type="button">Import bundle</button>
-          </div>
-          <textarea id="bundle-json" class="bundle-textarea" placeholder="Encoded bundle JSON appears here"></textarea>
-        </section>
-      </section>
+          <section class="section section-compact">
+            <h2>Bundle tools</h2>
+            <p class="helper">Export the current local bookmark snapshot as an encoded OneSync bundle, or import an encoded bundle and apply it to ${escapeHtml(bookmarkSourceLabel.toLowerCase())}.</p>
+            <div class="tool-actions">
+              <button id="export-bundle" class="secondary-button" type="button">Export bundle</button>
+              <button id="import-bundle" class="secondary-button" type="button">Import bundle</button>
+            </div>
+            <textarea id="bundle-json" class="bundle-textarea" placeholder="Encoded bundle JSON appears here"></textarea>
+          </section>
 
-      <section class="section">
-        <h2>Activity log</h2>
-        ${renderActivityLog(optionsViewModel.activityLog)}
-      </section>
+          <section class="section section-compact activity-section">
+            <h2>Activity log</h2>
+            ${renderActivityLog(optionsViewModel.activityLog)}
+          </section>
+        </aside>
+      </div>
     </main>
   `;
 
@@ -489,9 +557,35 @@ async function renderOptionsPage(privateBookmarksStateOverride?: Awaited<ReturnT
   });
 
   privateManagerRoot?.addEventListener("click", async (event) => {
-    const target = event.target instanceof HTMLElement ? event.target.closest<HTMLElement>("[data-private-folder-id], [data-private-node-id], [data-private-tab], [data-private-action]") : null;
+    const target = event.target instanceof HTMLElement
+      ? event.target.closest<HTMLElement>("[data-private-toggle-folder-id], [data-private-folder-id], [data-private-node-id], [data-private-tab], [data-private-action]")
+      : null;
 
     if (!target) {
+      return;
+    }
+
+    const toggledFolderId = target.dataset.privateToggleFolderId;
+
+    if (toggledFolderId) {
+      const willCollapse = !collapsedPrivateFolderIds.has(toggledFolderId);
+
+      if (willCollapse) {
+        collapsedPrivateFolderIds.add(toggledFolderId);
+
+        if (
+          selectedPrivateNodeId &&
+          selectedPrivateNodeId !== toggledFolderId &&
+          folderContainsSelectedNode(privateBookmarksState.tree, toggledFolderId, selectedPrivateNodeId)
+        ) {
+          selectedPrivateFolderId = toggledFolderId;
+          selectedPrivateNodeId = toggledFolderId;
+        }
+      } else {
+        collapsedPrivateFolderIds.delete(toggledFolderId);
+      }
+
+      await renderOptionsPage(privateBookmarksState);
       return;
     }
 
@@ -563,12 +657,19 @@ async function renderOptionsPage(privateBookmarksStateOverride?: Awaited<ReturnT
           return;
         }
 
+        const validatedUrl = validatePrivateBookmarkUrl(url);
+
+        if (!validatedUrl.ok) {
+          window.alert(validatedUrl.message);
+          return;
+        }
+
         await applyPrivateBookmarkOperation(
           {
             type: "create-bookmark",
             parentId: selectedFolder.id,
             title: title.trim(),
-            url: url.trim()
+            url: validatedUrl.value
           },
           "Bookmark created."
         );

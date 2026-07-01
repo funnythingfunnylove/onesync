@@ -4,8 +4,8 @@ const { sendMessageMock } = vi.hoisted(() => ({
   sendMessageMock: vi.fn()
 }));
 
-vi.mock("webextension-polyfill", () => ({
-  default: {
+vi.mock("wxt/browser", () => ({
+  browser: {
     runtime: {
       sendMessage: sendMessageMock
     }

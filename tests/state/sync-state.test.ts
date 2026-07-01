@@ -5,8 +5,8 @@ const { storageGetMock, storageSetMock } = vi.hoisted(() => ({
   storageSetMock: vi.fn()
 }));
 
-vi.mock("webextension-polyfill", () => ({
-  default: {
+vi.mock("wxt/browser", () => ({
+  browser: {
     storage: {
       local: {
         get: storageGetMock,

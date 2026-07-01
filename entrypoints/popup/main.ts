@@ -1,4 +1,6 @@
-import browser from "webextension-polyfill";
+import { browser } from "wxt/browser";
+import { getBookmarkStorageMode } from "../../src/core/browser/bookmarks";
+import { getBookmarkSourceDescription, getBookmarkSourceLabel } from "../../src/ui/bookmark-source";
 import { loadPopupViewModel, requestManualSync } from "../../src/ui/view-models/popup";
 
 const root = document.querySelector<HTMLDivElement>("#app");
@@ -32,6 +34,9 @@ async function renderPopup() {
   const viewModel = await loadPopupViewModel();
   const bannerMessage = popupMessage ?? viewModel.errorLabel;
   const progressPercent = viewModel.progressPercent ?? 0;
+  const bookmarkStorageMode = getBookmarkStorageMode();
+  const bookmarkSourceLabel = getBookmarkSourceLabel(bookmarkStorageMode);
+  const bookmarkSourceDescription = getBookmarkSourceDescription(bookmarkStorageMode);
 
   root.innerHTML = `
     <section class="panel">
@@ -50,6 +55,10 @@ async function renderPopup() {
         <div class="status-item">
           <span class="label">Last sync</span>
           <strong>${escapeHtml(viewModel.lastSyncLabel)}</strong>
+        </div>
+        <div class="status-item">
+          <span class="label">Bookmark source</span>
+          <strong>${escapeHtml(bookmarkSourceLabel)}</strong>
         </div>
       </div>
       ${
@@ -70,7 +79,7 @@ async function renderPopup() {
       ${
         bannerMessage
           ? `<p class="error-banner">${escapeHtml(bannerMessage)}</p>`
-          : `<p class="helper">Scheduled sync and manual sync use the same bookmark format.</p>`
+          : `<p class="helper">${escapeHtml(bookmarkSourceDescription)}</p>`
       }
       <p class="app-version">Version ${escapeHtml(extensionVersion)}</p>
       <button id="sync-now" class="primary-button" type="button" ${

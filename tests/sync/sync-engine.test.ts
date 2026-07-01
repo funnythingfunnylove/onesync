@@ -54,6 +54,59 @@ const localBundle: BookmarkBundle = {
   }
 };
 
+const emptyPrivateLocalBundle: BookmarkBundle = {
+  kind: "onesync.bookmarks",
+  schemaVersion: 1,
+  revision: "2026-07-01T08:00:00.000Z#device-safari#snapshot",
+  deviceId: "device-safari",
+  generatedAt: "2026-07-01T08:00:00.000Z",
+  roots: {
+    toolbar: "onesync.synthetic.toolbar",
+    menu: "onesync.synthetic.menu",
+    mobile: "onesync.synthetic.mobile",
+    unfiled: "onesync.synthetic.unfiled"
+  },
+  nodes: {
+    "onesync.synthetic.toolbar": {
+      id: "onesync.synthetic.toolbar",
+      type: "folder",
+      title: "Bookmarks Bar",
+      children: [],
+      addedAt: "2026-07-01T08:00:00.000Z",
+      updatedAt: "2026-07-01T08:00:00.000Z"
+    },
+    "onesync.synthetic.menu": {
+      id: "onesync.synthetic.menu",
+      type: "folder",
+      title: "Bookmarks Menu",
+      children: [],
+      addedAt: "2026-07-01T08:00:00.000Z",
+      updatedAt: "2026-07-01T08:00:00.000Z"
+    },
+    "onesync.synthetic.mobile": {
+      id: "onesync.synthetic.mobile",
+      type: "folder",
+      title: "Mobile Bookmarks",
+      children: [],
+      addedAt: "2026-07-01T08:00:00.000Z",
+      updatedAt: "2026-07-01T08:00:00.000Z"
+    },
+    "onesync.synthetic.unfiled": {
+      id: "onesync.synthetic.unfiled",
+      type: "folder",
+      title: "Unfiled Bookmarks",
+      children: [],
+      addedAt: "2026-07-01T08:00:00.000Z",
+      updatedAt: "2026-07-01T08:00:00.000Z"
+    }
+  },
+  tombstones: [],
+  meta: {
+    client: "onesync",
+    clientVersion: "0.1.0"
+  }
+};
+
 const encodedBundle: EncodedBookmarkBundle = {
   kind: "onesync.bundle",
   bundleVersion: 1,
@@ -555,6 +608,40 @@ describe("syncOnce", () => {
         message: "Applied remote bookmark bundle locally."
       })
     );
+  });
+
+  it("downloads the remote bundle when Safari starts from an empty private local carrier and no base snapshot exists", async () => {
+    const remoteBundle = structuredClone(localBundle);
+
+    listLocalBookmarks.mockResolvedValueOnce(emptyPrivateLocalBundle);
+    fetchLatestBundle.mockResolvedValue({
+      bundleEtag: "\"bundle-etag-remote\"",
+      metadataEtag: "\"meta-etag-remote\"",
+      bundle: encodedBundle
+    });
+    decodeBundle.mockResolvedValueOnce(remoteBundle);
+    applyBundleToBookmarks.mockImplementationOnce(async (_bundle, options) => {
+      await options?.onProgress?.({
+        processed: 1,
+        total: 1
+      });
+    });
+
+    const result = await syncOnce({
+      deviceId: "device-safari",
+      webdavUrl: "https://dav.example.com",
+      username: "alice",
+      password: "secret",
+      basePath: "/onesync",
+      intervalMinutes: 15,
+      scheduledSyncEnabled: true,
+      allowInsecureHttp: false
+    });
+
+    expect(result.status).toBe("downloaded");
+    expect(applyBundleToBookmarks).toHaveBeenCalledWith(remoteBundle, expect.any(Object));
+    expect(setBaseSnapshot).toHaveBeenCalledWith(remoteBundle);
+    expect(putLatestBundle).not.toHaveBeenCalled();
   });
 
   it("returns idle and skips writeback when neither side changed from the base snapshot", async () => {

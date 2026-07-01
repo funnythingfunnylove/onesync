@@ -16,12 +16,40 @@ import { runSyncSingleFlight } from "../src/core/sync/singleflight";
 import { createWebDavClient } from "../src/core/webdav/client";
 import { syncOnce } from "../src/core/sync/sync-engine";
 import { formatSyncProgressLabel, formatSyncStatusLabel, getSyncProgressPercent } from "../src/ui/sync-progress";
+import type { BookmarkBundle } from "../src/core/format/schema";
+import type { PrivateBookmarkOperation } from "../src/core/shared/types";
 
 function formatLastSyncLabel(lastSuccessfulSyncAt: string | null): string {
   return lastSuccessfulSyncAt ? new Date(lastSuccessfulSyncAt).toLocaleString() : "Never synced";
 }
 
-async function handleRuntimeMessage(message: RuntimeMessage): Promise<unknown> {
+function describePrivateBookmarkMutation(bundle: BookmarkBundle, operation: PrivateBookmarkOperation): string {
+  switch (operation.type) {
+    case "create-folder":
+      return `Private bookmarks: created folder "${operation.title}".`;
+    case "create-bookmark":
+      return `Private bookmarks: created bookmark "${operation.title}".`;
+    case "rename-node": {
+      const existingNode = bundle.nodes[operation.nodeId];
+      const previousTitle = existingNode?.title ?? "bookmark item";
+      return `Private bookmarks: renamed "${previousTitle}" to "${operation.title}".`;
+    }
+    case "delete-node": {
+      const existingNode = bundle.nodes[operation.nodeId];
+      const title = existingNode?.title ?? "bookmark item";
+      return `Private bookmarks: deleted "${title}".`;
+    }
+    case "move-node": {
+      const existingNode = bundle.nodes[operation.nodeId];
+      const destinationNode = bundle.nodes[operation.destinationFolderId];
+      const nodeTitle = existingNode?.title ?? "bookmark item";
+      const destinationTitle = destinationNode?.title ?? "selected folder";
+      return `Private bookmarks: moved "${nodeTitle}" to "${destinationTitle}".`;
+    }
+  }
+}
+
+export async function handleRuntimeMessage(message: RuntimeMessage): Promise<unknown> {
   switch (message.type) {
     case "onesync:get-popup-state": {
       const config = await getConfig();
@@ -61,6 +89,11 @@ async function handleRuntimeMessage(message: RuntimeMessage): Promise<unknown> {
       const next = applyPrivateBookmarkOperation(current, message.payload.operation, config.deviceId);
       try {
         const saved = await savePrivateManagerBundle(config, next, mode);
+        await appendActivityLog({
+          level: "info",
+          message: describePrivateBookmarkMutation(current, message.payload.operation),
+          createdAt: new Date().toISOString()
+        });
         return buildPrivateBookmarksViewState(saved, mode);
       } catch (error) {
         const messageText = error instanceof Error ? error.message : String(error);

@@ -13,6 +13,17 @@ const sampleEncodedBundle: EncodedBookmarkBundle = {
   payload: "payload"
 };
 
+const newerEncodedBundle: EncodedBookmarkBundle = {
+  kind: "onesync.bundle",
+  bundleVersion: 1,
+  encoding: "base64url+gzip+json",
+  checksum: {
+    algorithm: "sha256",
+    value: "def456"
+  },
+  payload: "newer-payload"
+};
+
 beforeEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -58,7 +69,96 @@ describe("webdav client", () => {
     expect(result.bundleEtag).toBe("\"bundle-etag\"");
     expect(result.metadataEtag).toBe("\"meta-etag\"");
     expect(result.bundle).toEqual(sampleEncodedBundle);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("falls back to the newest device revision from history when device metadata is newer than latest metadata", async () => {
+    const fetchMock = vi.fn(async (input: URL | RequestInfo, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+
+      if (url.endsWith("latest.meta.json")) {
+        return new Response(JSON.stringify({
+          revision: "2026-07-01T08:00:00.000Z#device-safari#sync",
+          deviceId: "device-safari",
+          updatedAt: "2026-07-01T08:00:00.000Z"
+        }), {
+          status: 200,
+          headers: {
+            ETag: "\"meta-etag-old\""
+          }
+        });
+      }
+
+      if (url.endsWith("latest.onesync")) {
+        return new Response(JSON.stringify(sampleEncodedBundle), {
+          status: 200,
+          headers: {
+            ETag: "\"bundle-etag-old\""
+          }
+        });
+      }
+
+      if (url.endsWith("/devices") && init?.method === "PROPFIND") {
+        return new Response(
+          `<?xml version="1.0"?>
+          <d:multistatus xmlns:d="DAV:">
+            <d:response><d:href>/onesync/devices/</d:href></d:response>
+            <d:response><d:href>/onesync/devices/device-chrome.json</d:href></d:response>
+            <d:response><d:href>/onesync/devices/device-safari.json</d:href></d:response>
+          </d:multistatus>`,
+          { status: 207 }
+        );
+      }
+
+      if (url.endsWith("/devices/device-chrome.json")) {
+        return new Response(JSON.stringify({
+          deviceId: "device-chrome",
+          lastRevision: "2026-07-01T09:00:00.000Z#device-chrome#sync",
+          updatedAt: "2026-07-01T09:00:00.000Z"
+        }), { status: 200 });
+      }
+
+      if (url.endsWith("/devices/device-safari.json")) {
+        return new Response(JSON.stringify({
+          deviceId: "device-safari",
+          lastRevision: "2026-07-01T08:00:00.000Z#device-safari#sync",
+          updatedAt: "2026-07-01T08:00:00.000Z"
+        }), { status: 200 });
+      }
+
+      if (url.includes("/history/2026-07-01T09-00-00.000Z#device-chrome#sync.onesync")) {
+        return new Response(JSON.stringify(newerEncodedBundle), { status: 200 });
+      }
+
+      return new Response("Not Found", { status: 404 });
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = createWebDavClient({
+      deviceId: "device-safari",
+      webdavUrl: "https://dav.example.com",
+      username: "alice",
+      password: "secret",
+      basePath: "/onesync",
+      intervalMinutes: 15,
+      scheduledSyncEnabled: true,
+      allowInsecureHttp: false
+    });
+
+    const result = await client.fetchLatestBundle();
+
+    expect(result.bundle).toEqual(newerEncodedBundle);
+    expect(result.bundleEtag).toBe("\"bundle-etag-old\"");
+    expect(result.metadataEtag).toBe("\"meta-etag-old\"");
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pathname: "/onesync/devices"
+      }),
+      expect.objectContaining({
+        method: "PROPFIND"
+      })
+    );
   });
 
   it("rejects insecure HTTP endpoints unless explicitly enabled", () => {

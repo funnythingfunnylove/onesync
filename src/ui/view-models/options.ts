@@ -26,6 +26,8 @@ export type PrivateBookmarkManagerNode = {
   url?: string;
   depth: number;
   isSelected: boolean;
+  isCollapsible: boolean;
+  isExpanded: boolean;
 };
 
 export type PrivateBookmarkManagerFolderEntry = {
@@ -71,15 +73,24 @@ type TreeNodeLocation = {
   parentFolderId: string | null;
 };
 
-function flattenTree(nodes: PrivateBookmarkViewNode[], parentFolderId: string | null = null): PrivateBookmarkViewNode[] {
-  const flattened: PrivateBookmarkViewNode[] = [];
+export type BookmarkUrlValidationResult =
+  | { ok: true; value: string }
+  | { ok: false; message: string };
 
+function flattenVisibleTree(
+  nodes: PrivateBookmarkViewNode[],
+  collapsedFolderIds: ReadonlySet<string>,
+  visible: PrivateBookmarkViewNode[] = []
+): PrivateBookmarkViewNode[] {
   for (const node of nodes) {
-    flattened.push(node);
-    flattened.push(...flattenTree(node.children, node.type === "folder" ? node.id : parentFolderId));
+    visible.push(node);
+
+    if (node.type === "folder" && !collapsedFolderIds.has(node.id)) {
+      flattenVisibleTree(node.children, collapsedFolderIds, visible);
+    }
   }
 
-  return flattened;
+  return visible;
 }
 
 function findTreeNodeLocation(
@@ -113,14 +124,70 @@ function isRootFolder(state: PrivateBookmarksViewState, nodeId: string): boolean
   return state.folders.some((folder) => folder.id === nodeId && folder.depth === 0);
 }
 
-function mapNode(node: PrivateBookmarkViewNode, selectedNodeId: string | null): PrivateBookmarkManagerNode {
+function collectFolderDescendantIds(node: PrivateBookmarkViewNode, collected: Set<string> = new Set<string>()): Set<string> {
+  for (const child of node.children) {
+    if (child.type !== "folder") {
+      continue;
+    }
+
+    collected.add(child.id);
+    collectFolderDescendantIds(child, collected);
+  }
+
+  return collected;
+}
+
+function mapNode(
+  node: PrivateBookmarkViewNode,
+  selectedNodeId: string | null,
+  collapsedFolderIds: ReadonlySet<string>,
+  treeMode: boolean
+): PrivateBookmarkManagerNode {
+  const isCollapsible = treeMode && node.type === "folder" && node.children.length > 0;
+
   return {
     id: node.id,
     type: node.type,
     title: node.title,
     url: node.url,
     depth: node.depth,
-    isSelected: node.id === selectedNodeId
+    isSelected: node.id === selectedNodeId,
+    isCollapsible,
+    isExpanded: isCollapsible ? !collapsedFolderIds.has(node.id) : false
+  };
+}
+
+export function validatePrivateBookmarkUrl(rawUrl: string): BookmarkUrlValidationResult {
+  const trimmed = rawUrl.trim();
+
+  if (!trimmed) {
+    return {
+      ok: false,
+      message: "Bookmark URL is required."
+    };
+  }
+
+  let parsedUrl: URL;
+
+  try {
+    parsedUrl = new URL(trimmed);
+  } catch {
+    return {
+      ok: false,
+      message: "Bookmark URL must be a complete URL."
+    };
+  }
+
+  if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
+    return {
+      ok: false,
+      message: "Bookmark URL must start with http:// or https://."
+    };
+  }
+
+  return {
+    ok: true,
+    value: trimmed
   };
 }
 
@@ -130,8 +197,10 @@ export function buildPrivateBookmarkManagerViewModel(
     activeTab: PrivateBookmarkTab;
     selectedFolderId?: string;
     selectedNodeId?: string;
+    collapsedFolderIds?: Iterable<string>;
   }
 ): PrivateBookmarkManagerViewModel {
+  const collapsedFolderIds = new Set(options.collapsedFolderIds ?? []);
   const selectedTreeNodeLocation = options.selectedNodeId
     ? findTreeNodeLocation(state.tree, options.selectedNodeId)
     : null;
@@ -143,8 +212,10 @@ export function buildPrivateBookmarkManagerViewModel(
       ? selectedTreeNodeLocation.node.id
       : selectedTreeNodeLocation?.parentFolderId ?? fallbackFolderId;
   const selectedFolderNode = findTreeNodeLocation(state.tree, resolvedSelectedFolderId)?.node ?? null;
-  const visibleSource =
-    options.activeTab === "tree" ? flattenTree(state.tree) : (selectedFolderNode?.children ?? state.currentFolder?.children ?? []);
+  const treeMode = options.activeTab === "tree";
+  const visibleSource = treeMode
+    ? flattenVisibleTree(state.tree, collapsedFolderIds)
+    : (selectedFolderNode?.children ?? state.currentFolder?.children ?? []);
   const visibleNodeIds = new Set(visibleSource.map((node) => node.id));
   const resolvedSelectedNodeId = options.selectedNodeId && (selectedTreeNodeLocation || visibleNodeIds.has(options.selectedNodeId))
     ? options.selectedNodeId
@@ -156,6 +227,16 @@ export function buildPrivateBookmarkManagerViewModel(
   const selectedNodeIsRoot = selectedNode ? isRootFolder(state, selectedNode.id) : false;
   const canMutateNode = !actionsDisabled && Boolean(selectedNode);
   const canMutateRoot = canMutateNode && !selectedNodeIsRoot;
+  const invalidMoveDestinationIds =
+    selectedNode?.type === "folder"
+      ? new Set<string>([selectedNode.id, ...collectFolderDescendantIds(selectedNode)])
+      : new Set<string>();
+  const moveDestinations = state.folders
+    .filter((folder) => !invalidMoveDestinationIds.has(folder.id))
+    .map((folder) => ({
+      ...folder,
+      isSelected: folder.id === resolvedSelectedFolderId
+    }));
 
   return {
     mode: state.mode,
@@ -167,16 +248,13 @@ export function buildPrivateBookmarkManagerViewModel(
       { id: "tree", label: "Tree", isActive: options.activeTab === "tree" }
     ],
     selectedFolder: selectedFolder ? { id: selectedFolder.id, title: selectedFolder.title } : null,
-    selectedNode: selectedNode ? mapNode(selectedNode, resolvedSelectedNodeId) : null,
+    selectedNode: selectedNode ? mapNode(selectedNode, resolvedSelectedNodeId, collapsedFolderIds, treeMode) : null,
     folderEntries: state.folders.map((folder) => ({
       ...folder,
       isSelected: folder.id === resolvedSelectedFolderId
     })),
-    visibleNodes: visibleSource.map((node) => mapNode(node, resolvedSelectedNodeId)),
-    moveDestinations: state.folders.map((folder) => ({
-      ...folder,
-      isSelected: folder.id === resolvedSelectedFolderId
-    })),
+    visibleNodes: visibleSource.map((node) => mapNode(node, resolvedSelectedNodeId, collapsedFolderIds, treeMode)),
+    moveDestinations,
     actions: {
       createFolder: {
         label: "Create folder",
@@ -192,7 +270,7 @@ export function buildPrivateBookmarkManagerViewModel(
       },
       move: {
         label: "Move",
-        disabled: !canMutateRoot
+        disabled: !canMutateRoot || moveDestinations.length === 0
       },
       delete: {
         label: "Delete",

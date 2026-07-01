@@ -11,16 +11,10 @@ importers:
       fflate:
         specifier: ^0.8.3
         version: 0.8.3
-      webextension-polyfill:
-        specifier: ^0.12.0
-        version: 0.12.0
       zod:
         specifier: ^4.4.3
         version: 4.4.3
     devDependencies:
-      '@types/webextension-polyfill':
-        specifier: ^0.12.5
-        version: 0.12.5
       typescript:
         specifier: ^6.0.3
         version: 6.0.3
@@ -1758,9 +1752,6 @@ packages:
     resolution: {integrity: sha512-rQicL7OwuqWdQWI33JkSXKcp7cuv1mJG8u3jRQwx/8aDsmhbTHs9ZRmNYOL+LX0wX8edIEQX8jj4bB60GoXtKA==}
     engines: {node: '>=18.0.0', npm: '>=8.0.0'}
 
-  webextension-polyfill@0.12.0:
-    resolution: {integrity: sha512-97TBmpoWJEE+3nFBQ4VocyCdLKfw54rFaJ6EVQYLBCXqCIpLSZkwGgASpv4oPt9gdKCJ80RJlcmNzNn008Ag6Q==}
-
   webpack-virtual-modules@0.6.2:
     resolution: {integrity: sha512-66/V2i5hQanC51vBQKPH4aI8NMAcBW59FVBs+rC7eGHupMyfn34q7rZIE+ETlJ+XTevqfUhVVBgSUNSW2flEUQ==}
 
@@ -3382,8 +3373,6 @@ snapshots:
       zip-dir: 2.0.0
     transitivePeerDependencies:
       - supports-color
-
-  webextension-polyfill@0.12.0: {}
 
   webpack-virtual-modules@0.6.2: {}
 

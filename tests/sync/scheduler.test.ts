@@ -18,8 +18,8 @@ const {
   appendActivityLog: vi.fn()
 }));
 
-vi.mock("webextension-polyfill", () => ({
-  default: {
+vi.mock("wxt/browser", () => ({
+  browser: {
     alarms: {
       create: alarmsCreate,
       clear: alarmsClear,

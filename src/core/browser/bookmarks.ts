@@ -2,6 +2,7 @@ import { browser } from "wxt/browser";
 import type { BookmarkBundle, BookmarkNode } from "../format/schema";
 import { normalizeBundle } from "../format/schema";
 import type { SyncConfig } from "../state/config";
+import { clearStoredBundle, loadStoredBundle, saveStoredBundle } from "./bundle-storage";
 
 type NativeBookmarkTreeNode = {
   id: string;
@@ -12,6 +13,7 @@ type NativeBookmarkTreeNode = {
   dateGroupModified?: number;
 };
 type SemanticRoot = "toolbar" | "menu" | "mobile" | "unfiled";
+const SEMANTIC_ROOT_ORDER: SemanticRoot[] = ["toolbar", "menu", "mobile", "unfiled"];
 export type BookmarkStorageMode = "native" | "private" | "unavailable";
 export type BookmarkItemProgress = {
   processed: number;
@@ -324,6 +326,55 @@ async function createChildrenFromBundle(
   }
 }
 
+function getGroupedBundleRootIds(
+  bundle: BookmarkBundle,
+  rootNames: SemanticRoot[]
+): string[] {
+  const rootIds: string[] = [];
+  const seenRootIds = new Set<string>();
+
+  for (const rootName of rootNames) {
+    const bundleRootId = bundle.roots[rootName];
+
+    if (!bundleRootId || seenRootIds.has(bundleRootId)) {
+      continue;
+    }
+
+    seenRootIds.add(bundleRootId);
+    rootIds.push(bundleRootId);
+  }
+
+  return rootIds;
+}
+
+function buildNativeRootGroups(
+  nativeRoots: Partial<Record<SemanticRoot, NativeBookmarkTreeNode>>
+): Array<{ nativeRoot: NativeBookmarkTreeNode; rootNames: SemanticRoot[] }> {
+  const groups = new Map<string, { nativeRoot: NativeBookmarkTreeNode; rootNames: SemanticRoot[] }>();
+
+  for (const rootName of SEMANTIC_ROOT_ORDER) {
+    const nativeRoot = nativeRoots[rootName];
+
+    if (!nativeRoot) {
+      continue;
+    }
+
+    const existing = groups.get(nativeRoot.id);
+
+    if (existing) {
+      existing.rootNames.push(rootName);
+      continue;
+    }
+
+    groups.set(nativeRoot.id, {
+      nativeRoot,
+      rootNames: [rootName]
+    });
+  }
+
+  return Array.from(groups.values());
+}
+
 async function resolveNativeRoots(): Promise<Partial<Record<SemanticRoot, NativeBookmarkTreeNode>>> {
   const bookmarksApi = requireBookmarksApi();
 
@@ -396,14 +447,13 @@ function createEmptyPrivateBundle(config: SyncConfig): BookmarkBundle {
 
 async function loadPrivateBookmarkBundle(config: SyncConfig): Promise<BookmarkBundle> {
   const storageArea = requirePrivateBookmarkStorage();
-  const storedValue = (await storageArea.get(PRIVATE_BOOKMARKS_KEY))[PRIVATE_BOOKMARKS_KEY];
+  const storedBundle = await loadStoredBundle(storageArea, PRIVATE_BOOKMARKS_KEY);
 
-  if (storedValue) {
-    const normalizedStoredBundle = normalizeBundle(storedValue as BookmarkBundle);
+  if (storedBundle) {
     const generatedAt = new Date().toISOString();
 
     return {
-      ...normalizedStoredBundle,
+      ...storedBundle,
       revision: `${generatedAt}#${config.deviceId}#snapshot`,
       deviceId: config.deviceId,
       generatedAt
@@ -411,38 +461,28 @@ async function loadPrivateBookmarkBundle(config: SyncConfig): Promise<BookmarkBu
   }
 
   const emptyBundle = createEmptyPrivateBundle(config);
-  await storageArea.set({ [PRIVATE_BOOKMARKS_KEY]: emptyBundle });
+  await saveStoredBundle(storageArea, PRIVATE_BOOKMARKS_KEY, emptyBundle);
   return emptyBundle;
 }
 
 async function savePrivateBookmarkBundle(bundle: BookmarkBundle): Promise<BookmarkBundle> {
   const storageArea = requirePrivateBookmarkStorage();
-  const normalizedBundle = normalizeBundle(bundle);
-  await storageArea.set({ [PRIVATE_BOOKMARKS_KEY]: normalizedBundle });
-  return normalizedBundle;
+  return saveStoredBundle(storageArea, PRIVATE_BOOKMARKS_KEY, bundle);
 }
 
 async function saveNativeFallbackBundle(bundle: BookmarkBundle): Promise<BookmarkBundle> {
   const storageArea = requirePrivateBookmarkStorage();
-  const normalizedBundle = normalizeBundle(bundle);
-  await storageArea.set({ [PRIVATE_BOOKMARKS_NATIVE_FALLBACK_KEY]: normalizedBundle });
-  return normalizedBundle;
+  return saveStoredBundle(storageArea, PRIVATE_BOOKMARKS_NATIVE_FALLBACK_KEY, bundle);
 }
 
 export async function loadSavedSharedBundleFallback(): Promise<BookmarkBundle | null> {
   const storageArea = requirePrivateBookmarkStorage();
-  const storedValue = (await storageArea.get(PRIVATE_BOOKMARKS_NATIVE_FALLBACK_KEY))[PRIVATE_BOOKMARKS_NATIVE_FALLBACK_KEY];
-
-  if (!storedValue) {
-    return null;
-  }
-
-  return normalizeBundle(storedValue as BookmarkBundle);
+  return loadStoredBundle(storageArea, PRIVATE_BOOKMARKS_NATIVE_FALLBACK_KEY);
 }
 
 export async function clearSavedSharedBundleFallback(): Promise<void> {
   const storageArea = requirePrivateBookmarkStorage();
-  await storageArea.set({ [PRIVATE_BOOKMARKS_NATIVE_FALLBACK_KEY]: null });
+  await clearStoredBundle(storageArea, PRIVATE_BOOKMARKS_NATIVE_FALLBACK_KEY);
 }
 
 export async function listLocalBookmarks(
@@ -551,52 +591,56 @@ export async function applyBundleToBookmarks(
     }
 
     const nativeRoots = await resolveNativeRoots();
+    const nativeRootGroups = buildNativeRootGroups(nativeRoots);
     const countedNativeRootIds = new Set<string>();
     const progressTracker: ProgressTracker | null = options.onProgress
       ? {
           processed: 0,
-          total: (Object.keys(nativeRoots) as SemanticRoot[]).reduce((total, rootName) => {
-            const nativeRoot = nativeRoots[rootName];
-
-            if (!nativeRoot || countedNativeRootIds.has(nativeRoot.id)) {
+          total: nativeRootGroups.reduce((total, group) => {
+            if (countedNativeRootIds.has(group.nativeRoot.id)) {
               return total;
             }
 
-            countedNativeRootIds.add(nativeRoot.id);
+            countedNativeRootIds.add(group.nativeRoot.id);
 
-            const bundleRootNode = bundle.nodes[bundle.roots[rootName]];
+            return (
+              total +
+              getGroupedBundleRootIds(bundle, group.rootNames).reduce((groupTotal, bundleRootId) => {
+                const bundleRootNode = bundle.nodes[bundleRootId];
 
-            if (!bundleRootNode || bundleRootNode.type !== "folder") {
-              return total;
-            }
+                if (!bundleRootNode || bundleRootNode.type !== "folder") {
+                  return groupTotal;
+                }
 
-            return total + countBundleDescendants(bundle, bundleRootNode.children);
+                return groupTotal + countBundleDescendants(bundle, bundleRootNode.children);
+              }, 0)
+            );
           }, 0),
           onProgress: options.onProgress
         }
       : null;
-    const appliedNativeRootIds = new Set<string>();
-
-    for (const rootName of Object.keys(nativeRoots) as SemanticRoot[]) {
-      const nativeRoot = nativeRoots[rootName];
-      if (!nativeRoot || appliedNativeRootIds.has(nativeRoot.id)) {
-        continue;
-      }
-
-      appliedNativeRootIds.add(nativeRoot.id);
-
-      const bundleRootId = bundle.roots[rootName];
-      const bundleRootNode = bundle.nodes[bundleRootId];
-
-      if (!bundleRootNode || bundleRootNode.type !== "folder") {
-        continue;
-      }
+    for (const group of nativeRootGroups) {
+      const { nativeRoot, rootNames } = group;
 
       for (const childNode of nativeRoot.children ?? []) {
         await removeBookmarkNode(childNode.id, !childNode.url);
       }
 
-      await createChildrenFromBundle(nativeRoot.id, nativeRoot.id, bundleRootNode.children, bundle, progressTracker);
+      for (const bundleRootId of getGroupedBundleRootIds(bundle, rootNames)) {
+        const bundleRootNode = bundle.nodes[bundleRootId];
+
+        if (!bundleRootNode || bundleRootNode.type !== "folder") {
+          continue;
+        }
+
+        await createChildrenFromBundle(
+          nativeRoot.id,
+          nativeRoot.id,
+          bundleRootNode.children,
+          bundle,
+          progressTracker
+        );
+      }
     }
 
     await clearSavedSharedBundleFallback();

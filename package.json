@@ -20,11 +20,9 @@
   },
   "dependencies": {
     "fflate": "^0.8.3",
-    "webextension-polyfill": "^0.12.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@types/webextension-polyfill": "^0.12.5",
     "typescript": "^6.0.3",
     "vitest": "^4.1.9",
     "wxt": "^0.20.27"

@@ -37,6 +37,10 @@ function hasChanges(changeSet: {
   );
 }
 
+function hasMeaningfulChangesWithoutBase(bundle: BookmarkBundle): boolean {
+  return countBookmarkItems(bundle) > 0 || bundle.tombstones.length > 0;
+}
+
 function getProgressBucket(progress: SyncProgress): number {
   if (progress.total <= 0) {
     return progress.processed;
@@ -207,8 +211,12 @@ export async function syncOnce(config: SyncConfig): Promise<{
     );
     const localChanges = diffBundles(baseSnapshot, localBundle);
     const remoteChanges = diffBundles(baseSnapshot, remoteBundle);
-    const hasLocalChanges = hasChanges(localChanges);
-    const hasRemoteChanges = hasChanges(remoteChanges);
+    const hasLocalChanges = baseSnapshot
+      ? hasChanges(localChanges)
+      : hasMeaningfulChangesWithoutBase(localBundle);
+    const hasRemoteChanges = baseSnapshot
+      ? hasChanges(remoteChanges)
+      : hasMeaningfulChangesWithoutBase(remoteBundle);
 
     if (!hasLocalChanges && !hasRemoteChanges) {
       await setBaseSnapshot(remoteBundle);

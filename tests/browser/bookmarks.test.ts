@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { decodeBundle } from "../../src/core/format/decode";
+import type { EncodedBookmarkBundle } from "../../src/core/format/schema";
 
 const {
   browserMock,
@@ -405,17 +407,107 @@ describe("bookmark adapter", () => {
 
     expect(storageSetMock).toHaveBeenCalledWith({
       "onesync.privateBookmarks": expect.objectContaining({
-        roots: {
-          toolbar: "private-toolbar",
-          menu: "private-menu",
-          mobile: "private-mobile",
-          unfiled: "private-unfiled"
-        }
+        kind: "onesync.bundle",
+        bundleVersion: 1,
+        encoding: "base64url+gzip+json"
       })
+    });
+    const storedBundle = storageSetMock.mock.calls[0]?.[0]?.["onesync.privateBookmarks"] as EncodedBookmarkBundle;
+    await expect(decodeBundle(storedBundle)).resolves.toMatchObject({
+      roots: {
+        toolbar: "private-toolbar",
+        menu: "private-menu",
+        mobile: "private-mobile",
+        unfiled: "private-unfiled"
+      }
     });
     expect(createMock).not.toHaveBeenCalled();
     expect(removeMock).not.toHaveBeenCalled();
     expect(removeTreeMock).not.toHaveBeenCalled();
+  });
+
+  it("applies both menu and unfiled payloads when Chrome-style roots resolve to the same native folder", async () => {
+    await applyBundleToBookmarks({
+      kind: "onesync.bookmarks",
+      schemaVersion: 1,
+      revision: "2026-07-01T00:00:00.000Z#device-1#snapshot",
+      deviceId: "device-1",
+      generatedAt: "2026-07-01T00:00:00.000Z",
+      roots: {
+        toolbar: "bundle-toolbar",
+        menu: "bundle-menu",
+        mobile: "bundle-mobile",
+        unfiled: "bundle-unfiled"
+      },
+      nodes: {
+        "bundle-toolbar": {
+          id: "bundle-toolbar",
+          type: "folder",
+          title: "Bookmarks Bar",
+          children: [],
+          addedAt: "2026-07-01T00:00:00.000Z",
+          updatedAt: "2026-07-01T00:00:00.000Z"
+        },
+        "bundle-menu": {
+          id: "bundle-menu",
+          type: "folder",
+          title: "Bookmarks Menu",
+          children: ["menu-bookmark"],
+          addedAt: "2026-07-01T00:00:00.000Z",
+          updatedAt: "2026-07-01T00:00:00.000Z"
+        },
+        "bundle-mobile": {
+          id: "bundle-mobile",
+          type: "folder",
+          title: "Mobile Bookmarks",
+          children: [],
+          addedAt: "2026-07-01T00:00:00.000Z",
+          updatedAt: "2026-07-01T00:00:00.000Z"
+        },
+        "bundle-unfiled": {
+          id: "bundle-unfiled",
+          type: "folder",
+          title: "Unfiled Bookmarks",
+          children: ["unfiled-bookmark"],
+          addedAt: "2026-07-01T00:00:00.000Z",
+          updatedAt: "2026-07-01T00:00:00.000Z"
+        },
+        "menu-bookmark": {
+          id: "menu-bookmark",
+          type: "bookmark",
+          title: "Menu bookmark",
+          url: "https://menu.example.com/",
+          addedAt: "2026-07-01T00:00:00.000Z",
+          updatedAt: "2026-07-01T00:00:00.000Z"
+        },
+        "unfiled-bookmark": {
+          id: "unfiled-bookmark",
+          type: "bookmark",
+          title: "Unfiled bookmark",
+          url: "https://unfiled.example.com/",
+          addedAt: "2026-07-01T00:00:00.000Z",
+          updatedAt: "2026-07-01T00:00:00.000Z"
+        }
+      },
+      tombstones: [],
+      meta: {
+        client: "onesync",
+        clientVersion: "0.1.3"
+      }
+    });
+
+    expect(removeMock).toHaveBeenCalledWith("bookmark-1");
+    expect(createMock).toHaveBeenCalledTimes(2);
+    expect(createMock).toHaveBeenNthCalledWith(1, {
+      parentId: "menu-root",
+      title: "Menu bookmark",
+      url: "https://menu.example.com/"
+    });
+    expect(createMock).toHaveBeenNthCalledWith(2, {
+      parentId: "menu-root",
+      title: "Unfiled bookmark",
+      url: "https://unfiled.example.com/"
+    });
   });
 
   it("re-applies shared bundles through the existing private bookmark fallback", async () => {
@@ -489,12 +581,9 @@ describe("bookmark adapter", () => {
 
     expect(storageSetMock).toHaveBeenCalledWith({
       "onesync.privateBookmarks": expect.objectContaining({
-        roots: {
-          toolbar: "private-toolbar",
-          menu: "private-menu",
-          mobile: "private-mobile",
-          unfiled: "private-unfiled"
-        }
+        kind: "onesync.bundle",
+        bundleVersion: 1,
+        encoding: "base64url+gzip+json"
       })
     });
   });
@@ -562,12 +651,9 @@ describe("bookmark adapter", () => {
 
     expect(storageSetMock).toHaveBeenCalledWith({
       "onesync.privateBookmarksNativeFallback": expect.objectContaining({
-        roots: {
-          toolbar: "toolbar-root",
-          menu: "menu-root",
-          mobile: "mobile-root",
-          unfiled: "menu-root"
-        }
+        kind: "onesync.bundle",
+        bundleVersion: 1,
+        encoding: "base64url+gzip+json"
       })
     });
   });
@@ -718,12 +804,9 @@ describe("bookmark adapter", () => {
     });
     expect(storageSetMock).toHaveBeenCalledWith({
       "onesync.privateBookmarks": expect.objectContaining({
-        roots: {
-          toolbar: "onesync.synthetic.toolbar",
-          menu: "onesync.synthetic.menu",
-          mobile: "onesync.synthetic.mobile",
-          unfiled: "onesync.synthetic.unfiled"
-        }
+        kind: "onesync.bundle",
+        bundleVersion: 1,
+        encoding: "base64url+gzip+json"
       })
     });
   });

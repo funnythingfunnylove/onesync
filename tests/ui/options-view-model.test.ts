@@ -20,7 +20,8 @@ import {
   mutatePrivateBookmarks,
   requestOptionsConnectionCheck,
   requestOptionsSync,
-  saveAndSyncOptionsConfig
+  saveAndSyncOptionsConfig,
+  validatePrivateBookmarkUrl
 } from "../../src/ui/view-models/options";
 
 const sampleConfig: SyncConfig = {
@@ -217,9 +218,10 @@ describe("options view-model", () => {
         type: "bookmark"
       })
     ]);
-    expect(viewModel.moveDestinations).toEqual(
-      expect.arrayContaining([expect.objectContaining({ id: "folder-a", isSelected: true })])
-    );
+    expect(viewModel.moveDestinations).toEqual([
+      expect.objectContaining({ id: "root-toolbar", isSelected: false }),
+      expect.objectContaining({ id: "folder-b", isSelected: false })
+    ]);
   });
 
   it("uses the selected bookmark parent folder as the action context instead of a stale folder selection", () => {
@@ -256,6 +258,79 @@ describe("options view-model", () => {
     );
     expect(viewModel.actions.createFolder.disabled).toBe(false);
     expect(viewModel.actions.createBookmark.disabled).toBe(false);
+  });
+
+  it("filters invalid move destinations so folders cannot target themselves or descendants", () => {
+    const viewModel = buildPrivateBookmarkManagerViewModel(
+      {
+        ...samplePrivateState,
+        folders: [
+          { id: "root-toolbar", title: "Bookmarks Bar", depth: 0 },
+          { id: "folder-a", title: "Folder A", depth: 1 },
+          { id: "folder-c", title: "Folder C", depth: 2 },
+          { id: "folder-b", title: "Folder B", depth: 1 }
+        ],
+        tree: [
+          {
+            id: "root-toolbar",
+            type: "folder",
+            title: "Bookmarks Bar",
+            depth: 0,
+            children: [
+              {
+                id: "folder-a",
+                type: "folder",
+                title: "Folder A",
+                depth: 1,
+                children: [
+                  {
+                    id: "folder-c",
+                    type: "folder",
+                    title: "Folder C",
+                    depth: 2,
+                    children: []
+                  }
+                ]
+              },
+              {
+                id: "folder-b",
+                type: "folder",
+                title: "Folder B",
+                depth: 1,
+                children: []
+              }
+            ]
+          }
+        ]
+      },
+      {
+        activeTab: "tree",
+        selectedNodeId: "folder-a"
+      }
+    );
+
+    expect(viewModel.moveDestinations.map((folder) => folder.id)).toEqual(["root-toolbar", "folder-b"]);
+    expect(viewModel.actions.move.disabled).toBe(false);
+  });
+
+  it("supports collapsing tree folders with UI-local expansion state", () => {
+    const viewModel = buildPrivateBookmarkManagerViewModel(samplePrivateState, {
+      activeTab: "tree",
+      selectedNodeId: "root-toolbar",
+      collapsedFolderIds: new Set(["folder-a"])
+    });
+
+    expect(viewModel.visibleNodes.map((node) => node.id)).toEqual([
+      "root-toolbar",
+      "folder-a",
+      "folder-b",
+      "bookmark-1"
+    ]);
+    expect(viewModel.visibleNodes.find((node) => node.id === "folder-a")).toMatchObject({
+      id: "folder-a",
+      isCollapsible: true,
+      isExpanded: false
+    });
   });
 
   it("protects root folders and preserves the tree tab selection for unavailable runtimes", () => {
@@ -420,5 +495,20 @@ describe("options view-model", () => {
     sendMessageMock.mockRejectedValueOnce(new Error("sync dispatch failed"));
 
     await expect(requestOptionsSync()).rejects.toThrow(/sync dispatch failed/i);
+  });
+
+  it("validates bookmark urls locally before the UI commits them", () => {
+    expect(validatePrivateBookmarkUrl("https://example.com/docs")).toEqual({
+      ok: true,
+      value: "https://example.com/docs"
+    });
+    expect(validatePrivateBookmarkUrl("javascript:alert(1)")).toEqual({
+      ok: false,
+      message: "Bookmark URL must start with http:// or https://."
+    });
+    expect(validatePrivateBookmarkUrl("not a url")).toEqual({
+      ok: false,
+      message: "Bookmark URL must be a complete URL."
+    });
   });
 });

@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { encodeBundleLocally } from "../../src/core/format/encode-core";
 import type { RuntimeMessage } from "../../src/core/shared/types";
 import type { SyncConfig } from "../../src/core/state/config";
 import type { BookmarkBundle } from "../../src/core/format/schema";
+import { installMockIndexedDb } from "../helpers/mock-indexeddb";
 
 type NativeBookmarkTreeNode = {
   id: string;
@@ -425,6 +427,19 @@ describe("private manager carrier integration", () => {
     expect(storageGetMock).toHaveBeenCalledWith("onesync.privateBookmarks");
   });
 
+  it("loads an encoded Safari private carrier bundle when native bookmarks are unavailable", async () => {
+    (browserMock as { bookmarks?: unknown }).bookmarks = undefined;
+    storageState["onesync.privateBookmarks"] = await encodeBundleLocally(privateCarrierBundle);
+
+    const bundle = await loadPrivateManagerBundle(sampleConfig);
+
+    expect(bundle.nodes["private-bookmark"]).toMatchObject({
+      title: "Private Carrier Bookmark",
+      url: "https://private.example.com/"
+    });
+    expect(storageGetMock).toHaveBeenCalledWith("onesync.privateBookmarks");
+  });
+
   it("reads back native carrier updates after a local shared-bundle apply", async () => {
     await applySharedBundleLocally(updatedNativeBundle, "native");
 
@@ -463,9 +478,41 @@ describe("private manager carrier integration", () => {
       title: "Private Carrier Bookmark"
     });
     expect(storageState["onesync.privateBookmarks"]).toMatchObject({
-      roots: privateCarrierBundle.roots
+      kind: "onesync.bundle",
+      bundleVersion: 1,
+      encoding: "base64url+gzip+json"
     });
     expect(storageState["onesync.privateManagerBundle"]).toBeUndefined();
+  });
+
+  it("still saves Safari private-carrier mutations when storage.local quota is exceeded but indexedDB is available", async () => {
+    (browserMock as { bookmarks?: unknown }).bookmarks = undefined;
+    const mockIndexedDb = installMockIndexedDb();
+
+    storageSetMock.mockRejectedValueOnce(new Error("Invalid call to browser.storage.local.set(). Exceeded storage quota."));
+
+    try {
+      const saved = await savePrivateManagerBundle(sampleConfig, privateCarrierBundle, "private");
+
+      expect(saved.nodes["private-bookmark"]).toMatchObject({
+        title: "Private Carrier Bookmark"
+      });
+      expect(storageState["onesync.privateBookmarks"]).toBeUndefined();
+      expect(mockIndexedDb.read("bundles", "onesync.privateBookmarks")).toMatchObject({
+        kind: "onesync.bundle",
+        bundleVersion: 1,
+        encoding: "base64url+gzip+json"
+      });
+      await expect(loadPrivateManagerBundle(sampleConfig)).resolves.toMatchObject({
+        nodes: expect.objectContaining({
+          "private-bookmark": expect.objectContaining({
+            title: "Private Carrier Bookmark"
+          })
+        })
+      });
+    } finally {
+      mockIndexedDb.uninstall();
+    }
   });
 
   it("preserves the saved shared bundle when native apply fails on Chrome or Firefox", async () => {
@@ -473,7 +520,9 @@ describe("private manager carrier integration", () => {
 
     await expect(savePrivateManagerBundle(sampleConfig, updatedNativeBundle, "native")).rejects.toThrow(/not updated/i);
     expect(storageState["onesync.privateBookmarksNativeFallback"]).toMatchObject({
-      roots: updatedNativeBundle.roots
+      kind: "onesync.bundle",
+      bundleVersion: 1,
+      encoding: "base64url+gzip+json"
     });
 
     const bundle = await loadPrivateManagerBundle(sampleConfig);
@@ -494,7 +543,9 @@ describe("private manager carrier integration", () => {
 
     await expect(savePrivateManagerBundle(sampleConfig, updatedNativeBundle, "native")).rejects.toThrow(/not updated/i);
     expect(storageState["onesync.privateBookmarksNativeFallback"]).toMatchObject({
-      roots: updatedNativeBundle.roots
+      kind: "onesync.bundle",
+      bundleVersion: 1,
+      encoding: "base64url+gzip+json"
     });
 
     await applyBundleToBookmarks(syncedNativeBundle);
