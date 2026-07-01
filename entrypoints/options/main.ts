@@ -2,8 +2,9 @@ import { browser } from "wxt/browser";
 import { getBookmarkStorageMode } from "../../src/core/browser/bookmarks";
 import type { PrivateBookmarkViewNode } from "../../src/core/private-bookmarks/view-state";
 import type { SyncConfig } from "../../src/core/state/config";
+import type { SyncState } from "../../src/core/state/sync-state";
 import type { PrivateBookmarkOperation, PrivateBookmarkTab } from "../../src/core/shared/types";
-import { getBookmarkSourceDescription, getBookmarkSourceLabel } from "../../src/ui/bookmark-source";
+import { getBookmarkSourceLabel } from "../../src/ui/bookmark-source";
 import {
   buildPrivateBookmarkManagerViewModel,
   exportEncodedBundle,
@@ -80,8 +81,10 @@ function renderPrivateFolderList(
               data-private-folder-id="${escapeHtml(folder.id)}"
               style="--private-depth:${folder.depth};"
             >
-              <span class="private-node-type">Folder</span>
-              <strong>${escapeHtml(folder.title)}</strong>
+              <span class="private-folder-row">
+                <span class="private-folder-glyph" aria-hidden="true"></span>
+                <strong class="private-folder-title">${escapeHtml(folder.title)}</strong>
+              </span>
             </button>
           `
         )
@@ -142,7 +145,7 @@ function renderPrivateVisibleNodes(
               >
                 <span class="private-node-header">
                   <span class="private-node-type">${node.type === "folder" ? "Folder" : "Bookmark"}</span>
-                  <strong>${escapeHtml(node.title)}</strong>
+                  <strong class="private-node-title">${escapeHtml(node.title)}</strong>
                 </span>
                 ${node.url ? `<span class="private-node-meta">${escapeHtml(node.url)}</span>` : ""}
               </button>
@@ -195,6 +198,47 @@ function readConfigFromForm(form: HTMLFormElement, previousConfig: SyncConfig): 
   };
 }
 
+function getSyncOverview(syncState: SyncState): {
+  tone: "healthy" | "working" | "warning" | "ready";
+  badge: string;
+  heading: string;
+  note: string | null;
+} {
+  if (syncState.status === "error") {
+    return {
+      tone: "warning",
+      badge: "Review",
+      heading: "Sync needs review",
+      note: syncState.lastError ?? "Check remote settings"
+    };
+  }
+
+  if (syncState.status === "running") {
+    return {
+      tone: "working",
+      badge: "Syncing",
+      heading: syncState.progress?.detail ?? "Processing bookmark changes",
+      note: null
+    };
+  }
+
+  if (!syncState.lastSuccessfulSyncAt) {
+    return {
+      tone: "ready",
+      badge: "Ready",
+      heading: "First sync pending",
+      note: "Save settings and sync"
+    };
+  }
+
+  return {
+    tone: "healthy",
+    badge: "Ready",
+    heading: "Shared state is ready",
+    note: null
+  };
+}
+
 async function applyPrivateBookmarkOperation(
   operation: PrivateBookmarkOperation,
   successMessage: string
@@ -242,7 +286,7 @@ async function renderOptionsPage(privateBookmarksStateOverride?: Awaited<ReturnT
   const isRunning = optionsViewModel.syncState.status === "running";
   const bookmarkStorageMode = getBookmarkStorageMode();
   const bookmarkSourceLabel = getBookmarkSourceLabel(bookmarkStorageMode);
-  const bookmarkSourceDescription = getBookmarkSourceDescription(bookmarkStorageMode);
+  const syncOverview = getSyncOverview(optionsViewModel.syncState);
   const privateBookmarkManager = buildPrivateBookmarkManagerViewModel(privateBookmarksState, {
     activeTab: privateTab,
     selectedFolderId: selectedPrivateFolderId ?? undefined,
@@ -253,104 +297,167 @@ async function renderOptionsPage(privateBookmarksStateOverride?: Awaited<ReturnT
   selectedPrivateFolderId = privateBookmarkManager.selectedFolder?.id ?? null;
   selectedPrivateNodeId = privateBookmarkManager.selectedNode?.id ?? selectedPrivateFolderId;
 
+  const lastSuccessLabel = optionsViewModel.syncState.lastSuccessfulSyncAt
+    ? new Date(optionsViewModel.syncState.lastSuccessfulSyncAt).toLocaleString()
+    : "Never";
+  const scheduleLabel = optionsViewModel.config.scheduledSyncEnabled
+    ? `Every ${optionsViewModel.config.intervalMinutes} minute${optionsViewModel.config.intervalMinutes === 1 ? "" : "s"}`
+    : "Manual only";
+  const selectionLabel = privateBookmarkManager.selectedNode?.title
+    ?? privateBookmarkManager.selectedFolder?.title
+    ?? "Nothing selected";
+  const selectionMeta = privateBookmarkManager.selectedNode
+    ? privateBookmarkManager.selectedNode.type === "folder"
+      ? "Folder selected"
+      : "Bookmark selected"
+    : privateBookmarkManager.selectedFolder
+      ? "Folder selected"
+      : "Choose an item";
+  const selectedNodeTypeLabel = privateBookmarkManager.selectedNode
+    ? privateBookmarkManager.selectedNode.type === "folder"
+      ? "Folder"
+      : "Bookmark"
+    : "Selection";
+  const selectedNodeUrl = privateBookmarkManager.selectedNode?.url ?? null;
+  const contentHeading = privateBookmarkManager.activeTab === "folders" ? "Folder contents" : "Bookmark tree";
+  const contentDescription = privateBookmarkManager.activeTab === "folders"
+    ? (privateBookmarkManager.selectedFolder?.title ?? "Select a folder")
+    : "Full hierarchy";
+  const activeFolderLabel = privateBookmarkManager.selectedFolder?.title ?? "Library";
+  const folderCount = privateBookmarkManager.folderEntries.length;
+  const treeViewLabel = privateBookmarkManager.activeTab === "folders" ? "Focused view" : "Hierarchy view";
+  const selectionDescription = selectedNodeUrl
+    ? "Shared private dataset"
+    : "Shared private dataset";
+  const bookmarkModeMeta = privateBookmarkManager.mode === "native"
+    ? "Native carrier"
+    : privateBookmarkManager.mode === "private"
+      ? "Private store"
+      : "Unavailable";
+  const cadenceMeta = optionsViewModel.config.scheduledSyncEnabled ? "Automatic" : "Manual";
+  const revisionMeta = optionsViewModel.syncState.lastRevision ? `Rev ${optionsViewModel.syncState.lastRevision}` : "No revision";
+  const overviewHeadingCopy = "Status and source";
+  const bookmarkHeadingCopy = "Shared private library";
+  const remoteHeadingCopy = "Shared endpoint";
+  const bundleHeadingCopy = "Manual snapshot tools";
+  const activityHeadingCopy = "Recent events";
+
   root.innerHTML = `
     <main class="page">
-      <section class="hero">
-        <div>
-          <p class="eyebrow">Cross-browser bookmark sync</p>
-          <h1>onesync settings</h1>
-          <p class="hero-copy">Configure one shared bookmark format, scheduled WebDAV sync, and import/export utilities.</p>
-          <p class="helper">${escapeHtml(bookmarkSourceDescription)}</p>
-          <p class="hero-version">Version ${escapeHtml(extensionVersion)}</p>
+      <aside class="workspace-nav">
+        <div class="nav-brand">
+          <span class="nav-label">onesync workspace</span>
+          <h1>onesync</h1>
+        </div>
+        <section class="nav-status-card nav-status-card-${syncOverview.tone}">
+          <span class="status-pill status-pill-${syncOverview.tone}">${escapeHtml(syncOverview.badge)}</span>
+          <h2>${escapeHtml(syncOverview.heading)}</h2>
+          ${syncOverview.note ? `<p class="nav-status-copy">${escapeHtml(syncOverview.note)}</p>` : ""}
           ${
-            pageMessage
-              ? `<p class="page-message page-message-${pageMessage.type}">${escapeHtml(pageMessage.text)}</p>`
+            progressLabel
+              ? `
+                <div class="nav-progress-card">
+                  <div class="nav-progress-copy">
+                    <strong>${escapeHtml(progressLabel)}</strong>
+                    <span>${progressPercent}%</span>
+                  </div>
+                  <div class="progress-track" aria-hidden="true">
+                    <div class="progress-fill" style="width: ${progressPercent}%"></div>
+                  </div>
+                </div>
+              `
               : ""
           }
+        </section>
+        <nav class="workspace-links" aria-label="Settings sections">
+          <a class="workspace-link" href="#overview">Overview</a>
+          <a class="workspace-link" href="#private-bookmark-manager">Bookmark manager</a>
+          <a class="workspace-link" href="#remote-sync">Remote sync</a>
+          <a class="workspace-link" href="#bundle-tools">Bundle</a>
+          <a class="workspace-link" href="#activity-log">Activity</a>
+        </nav>
+        <div class="nav-meta-list">
+          <div class="nav-meta-item">
+            <span>Version</span>
+            <strong>${escapeHtml(extensionVersion)}</strong>
+          </div>
+          <div class="nav-meta-item">
+            <span>Device</span>
+            <strong>${escapeHtml(optionsViewModel.config.deviceId)}</strong>
+          </div>
         </div>
-        <div class="hero-metrics">
-          <div class="metric"><span>Status</span><strong>${escapeHtml(syncStateLabel)}</strong></div>
-          <div class="metric"><span>Bookmark source</span><strong>${escapeHtml(bookmarkSourceLabel)}</strong></div>
-          <div class="metric"><span>Last success</span><strong>${escapeHtml(optionsViewModel.syncState.lastSuccessfulSyncAt ? new Date(optionsViewModel.syncState.lastSuccessfulSyncAt).toLocaleString() : "Never")}</strong></div>
-          <div class="metric"><span>Progress</span><strong>${escapeHtml(progressLabel ?? "Waiting for sync")}</strong></div>
-        </div>
-      </section>
+      </aside>
 
-      ${
-        progressLabel
-          ? `
-            <section class="section">
-              <h2>Sync progress</h2>
-              <div class="progress-panel">
-                <div class="progress-panel-header">
-                  <span>${escapeHtml(progressLabel)}</span>
-                  <strong>${progressPercent}%</strong>
-                </div>
-                <div class="progress-track" aria-hidden="true">
-                  <div class="progress-fill" style="width: ${progressPercent}%"></div>
-                </div>
-              </div>
-            </section>
-          `
-          : ""
-      }
+      <div class="workspace-main">
+        ${
+          pageMessage
+            ? `<p class="notice notice-${pageMessage.type}">${escapeHtml(pageMessage.text)}</p>`
+            : ""
+        }
 
-      <div class="workspace-grid">
-        <section class="section private-manager-section" id="private-bookmark-manager">
-          <div class="section-header">
-            <div>
-              <h2>Private bookmarks</h2>
-              <p class="helper">${escapeHtml(privateBookmarkManager.modeHint)}</p>
-            </div>
-            <div class="section-badge">
-              <span>${escapeHtml(String(privateBookmarkManager.itemCount))} items</span>
+        <section class="content-section overview-panel" id="overview">
+          <div class="section-intro">
+            <h2>Overview</h2>
+            <p class="section-copy">${overviewHeadingCopy}</p>
+          </div>
+          <div class="summary-strip">
+            <article class="summary-item">
+              <span>Bookmark source</span>
               <strong>${escapeHtml(bookmarkSourceLabel)}</strong>
+              <p>${escapeHtml(bookmarkModeMeta)}</p>
+            </article>
+            <article class="summary-item">
+              <span>Last successful sync</span>
+              <strong>${escapeHtml(lastSuccessLabel)}</strong>
+              <p>${escapeHtml(revisionMeta)}</p>
+            </article>
+            <article class="summary-item">
+              <span>Sync cadence</span>
+              <strong>${escapeHtml(scheduleLabel)}</strong>
+              <p>${escapeHtml(cadenceMeta)}</p>
+            </article>
+          </div>
+        </section>
+
+        <section class="content-section bookmark-section" id="private-bookmark-manager">
+          <div class="section-header">
+            <div class="section-intro">
+              <h2>Bookmark manager</h2>
+              <p class="section-copy">${bookmarkHeadingCopy}</p>
+            </div>
+            <div class="section-summary">
+              <span>${escapeHtml(String(privateBookmarkManager.itemCount))} items</span>
+              <strong>${escapeHtml(activeFolderLabel)}</strong>
+              <p>${escapeHtml(bookmarkModeMeta)}</p>
             </div>
           </div>
 
-          <div class="private-controls">
-            <button type="button" class="secondary-button" data-private-action="create-folder" ${privateBookmarkManager.actions.createFolder.disabled ? "disabled" : ""}>
-              ${escapeHtml(privateBookmarkManager.actions.createFolder.label)}
-            </button>
-            <button type="button" class="secondary-button" data-private-action="create-bookmark" ${privateBookmarkManager.actions.createBookmark.disabled ? "disabled" : ""}>
-              ${escapeHtml(privateBookmarkManager.actions.createBookmark.label)}
-            </button>
-            <button type="button" class="secondary-button" data-private-action="rename" ${privateBookmarkManager.actions.rename.disabled ? "disabled" : ""}>
-              ${escapeHtml(privateBookmarkManager.actions.rename.label)}
-            </button>
-            <label class="private-move-control">
-              <span>Move to</span>
-              <select id="private-move-destination" ${privateBookmarkManager.actions.move.disabled ? "disabled" : ""}>
-                ${privateBookmarkManager.moveDestinations
-                  .map(
-                    (folder) => `
-                      <option value="${escapeHtml(folder.id)}" ${folder.isSelected ? "selected" : ""}>
-                        ${"&nbsp;&nbsp;".repeat(folder.depth)}${escapeHtml(folder.title)}
-                      </option>
-                    `
-                  )
-                  .join("")}
-              </select>
-            </label>
-            <button type="button" class="secondary-button" data-private-action="move" ${privateBookmarkManager.actions.move.disabled ? "disabled" : ""}>
-              ${escapeHtml(privateBookmarkManager.actions.move.label)}
-            </button>
-            <button type="button" class="secondary-button danger-button" data-private-action="delete" ${privateBookmarkManager.actions.delete.disabled ? "disabled" : ""}>
-              ${escapeHtml(privateBookmarkManager.actions.delete.label)}
-            </button>
-          </div>
-
-          <div class="private-layout">
-            <aside class="private-pane private-folder-pane">
-              <div class="pane-heading">
-                <h3>Folders</h3>
-                <p>${escapeHtml(privateBookmarkManager.selectedFolder?.title ?? "No folder selected")}</p>
+          <div class="bookmark-workspace">
+            <aside class="bookmark-pane bookmark-directory-pane">
+              <div class="bookmark-pane-header bookmark-pane-header-rail">
+                <div>
+                  <h3>Directory</h3>
+                  <p class="bookmark-pane-copy">${folderCount} folders indexed</p>
+                </div>
               </div>
-              ${renderPrivateFolderList(privateBookmarkManager.folderEntries)}
+              <div class="bookmark-pane-body bookmark-pane-body-rail">
+                ${renderPrivateFolderList(privateBookmarkManager.folderEntries)}
+              </div>
             </aside>
 
-            <section class="private-pane private-content-pane">
-              <div class="private-pane-toolbar">
+            <section class="bookmark-pane bookmark-content-pane">
+              <div class="bookmark-pane-toolbar bookmark-pane-toolbar-main">
+                <div class="bookmark-pane-header bookmark-pane-header-main">
+                  <div>
+                    <span class="bookmark-pane-kicker">${escapeHtml(treeViewLabel)}</span>
+                    <h3>${escapeHtml(contentHeading)}</h3>
+                    <p class="bookmark-pane-copy">${escapeHtml(contentDescription)}</p>
+                  </div>
+                  <div class="bookmark-context-chip">
+                    <span>Current folder</span>
+                    <strong>${escapeHtml(activeFolderLabel)}</strong>
+                  </div>
+                </div>
                 <div class="private-tabs" role="tablist" aria-label="Private bookmark views">
                   ${privateBookmarkManager.tabs
                     .map(
@@ -368,79 +475,163 @@ async function renderOptionsPage(privateBookmarksStateOverride?: Awaited<ReturnT
                     )
                     .join("")}
                 </div>
+              </div>
+              <div class="bookmark-pane-body bookmark-pane-body-main">
+                ${renderPrivateVisibleNodes(privateBookmarkManager.visibleNodes, privateBookmarkManager.activeTab)}
+              </div>
+            </section>
 
-                <div class="pane-heading pane-heading-compact">
-                  <h3>${privateBookmarkManager.activeTab === "folders" ? "Folder contents" : "Bookmark tree"}</h3>
-                  <p>${escapeHtml(privateBookmarkManager.selectedNode?.title ?? privateBookmarkManager.selectedFolder?.title ?? "Select a bookmark item to manage it.")}</p>
+            <aside class="bookmark-pane bookmark-inspector-pane">
+              <div class="bookmark-pane-header bookmark-pane-header-rail">
+                <div>
+                  <h3>Details</h3>
+                  <p class="bookmark-pane-copy">${escapeHtml(selectionMeta)}</p>
                 </div>
               </div>
-              ${renderPrivateVisibleNodes(privateBookmarkManager.visibleNodes, privateBookmarkManager.activeTab)}
-            </section>
+              <div class="bookmark-pane-body bookmark-pane-body-inspector">
+                <section class="inspector-section inspector-selection">
+                  <span>${escapeHtml(selectedNodeTypeLabel)}</span>
+                  <strong>${escapeHtml(selectionLabel)}</strong>
+                  <p class="inspector-url">${escapeHtml(selectedNodeUrl ?? selectionDescription)}</p>
+                </section>
+
+                <section class="inspector-section inspector-actions-section">
+                  <div class="inspector-action-group">
+                    <span>Create</span>
+                    <div class="inspector-button-grid inspector-button-grid-split">
+                      <button type="button" class="secondary-button" data-private-action="create-folder" ${privateBookmarkManager.actions.createFolder.disabled ? "disabled" : ""}>
+                        ${escapeHtml(privateBookmarkManager.actions.createFolder.label)}
+                      </button>
+                      <button type="button" class="secondary-button" data-private-action="create-bookmark" ${privateBookmarkManager.actions.createBookmark.disabled ? "disabled" : ""}>
+                        ${escapeHtml(privateBookmarkManager.actions.createBookmark.label)}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div class="inspector-action-group">
+                    <span>Organize</span>
+                    <button type="button" class="secondary-button" data-private-action="rename" ${privateBookmarkManager.actions.rename.disabled ? "disabled" : ""}>
+                      ${escapeHtml(privateBookmarkManager.actions.rename.label)}
+                    </button>
+                    <label class="field-group field-group-inline">
+                      <span>Move selection</span>
+                      <select id="private-move-destination" ${privateBookmarkManager.actions.move.disabled ? "disabled" : ""}>
+                        ${privateBookmarkManager.moveDestinations
+                          .map(
+                            (folder) => `
+                              <option value="${escapeHtml(folder.id)}" ${folder.isSelected ? "selected" : ""}>
+                                ${"&nbsp;&nbsp;".repeat(folder.depth)}${escapeHtml(folder.title)}
+                              </option>
+                            `
+                          )
+                          .join("")}
+                      </select>
+                    </label>
+                    <button type="button" class="secondary-button" data-private-action="move" ${privateBookmarkManager.actions.move.disabled ? "disabled" : ""}>
+                      ${escapeHtml(privateBookmarkManager.actions.move.label)}
+                    </button>
+                  </div>
+
+                  <div class="inspector-action-group inspector-action-group-danger">
+                    <span>Remove</span>
+                    <button type="button" class="secondary-button danger-button" data-private-action="delete" ${privateBookmarkManager.actions.delete.disabled ? "disabled" : ""}>
+                      ${escapeHtml(privateBookmarkManager.actions.delete.label)}
+                    </button>
+                  </div>
+                </section>
+              </div>
+            </aside>
           </div>
         </section>
 
-        <aside class="workspace-sidebar">
-          <section class="section section-compact">
-            <h2>WebDAV</h2>
+        <section class="content-section settings-section" id="remote-sync">
+          <div class="section-intro">
+            <h2>Connection</h2>
+            <p class="section-copy">${remoteHeadingCopy}</p>
+          </div>
+          <section class="settings-chapter">
             <form id="settings-form" class="form-grid">
-            <label>
-              <span>WebDAV URL</span>
-              <input name="webdavUrl" value="${escapeHtml(optionsViewModel.config.webdavUrl)}" placeholder="https://dav.example.com/" />
-            </label>
-            <label>
-              <span>Username</span>
-              <input name="username" value="${escapeHtml(optionsViewModel.config.username)}" />
-            </label>
-            <label>
-              <span>Password</span>
-              <input name="password" type="password" value="${escapeHtml(optionsViewModel.config.password)}" />
-            </label>
-            <label>
-              <span>Base path</span>
-              <input name="basePath" value="${escapeHtml(optionsViewModel.config.basePath)}" />
-            </label>
-            <label>
-              <span>Interval</span>
-              <select name="intervalMinutes">
-                ${[1, 5, 15, 30, 60]
-                  .map(
-                    (value) =>
-                      `<option value="${value}" ${value === optionsViewModel.config.intervalMinutes ? "selected" : ""}>${value} minute${value === 1 ? "" : "s"}</option>`
-                  )
-                  .join("")}
-              </select>
-            </label>
-            <label class="checkbox-row">
-              <input name="scheduledSyncEnabled" type="checkbox" ${optionsViewModel.config.scheduledSyncEnabled ? "checked" : ""} />
-              <span>Enable scheduled sync</span>
-            </label>
-            <label class="checkbox-row">
-              <input name="allowInsecureHttp" type="checkbox" ${optionsViewModel.config.allowInsecureHttp ? "checked" : ""} />
-              <span>Allow plain HTTP for trusted local networks</span>
-            </label>
-            <div class="actions">
-              <button id="save-settings" class="primary-button" type="submit">Save settings</button>
-              <button id="check-connection" class="secondary-button" type="button">Check connection</button>
-              <button id="sync-now" class="secondary-button" type="button" ${isRunning ? "disabled" : ""}>${isRunning ? "Syncing..." : "Sync now"}</button>
-            </div>
+              <div class="chapter-grid">
+                <div class="field-cluster">
+                  <div class="cluster-heading">
+                    <h3>Endpoint</h3>
+                    <p class="section-copy">Remote path and credentials.</p>
+                  </div>
+              <label class="field-group">
+                <span>WebDAV URL</span>
+                <input name="webdavUrl" value="${escapeHtml(optionsViewModel.config.webdavUrl)}" placeholder="https://dav.example.com/" />
+              </label>
+              <label class="field-group">
+                <span>Username</span>
+                <input name="username" value="${escapeHtml(optionsViewModel.config.username)}" />
+              </label>
+              <label class="field-group">
+                <span>Password</span>
+                <input name="password" type="password" value="${escapeHtml(optionsViewModel.config.password)}" />
+              </label>
+              <label class="field-group">
+                <span>Base path</span>
+                <input name="basePath" value="${escapeHtml(optionsViewModel.config.basePath)}" />
+              </label>
+                </div>
+                <div class="field-cluster">
+                  <div class="cluster-heading">
+                    <h3>Schedule</h3>
+                    <p class="section-copy">Cadence and transport rules.</p>
+                  </div>
+              <label class="field-group">
+                <span>Interval</span>
+                <select name="intervalMinutes">
+                  ${[1, 5, 15, 30, 60]
+                    .map(
+                      (value) =>
+                        `<option value="${value}" ${value === optionsViewModel.config.intervalMinutes ? "selected" : ""}>${value} minute${value === 1 ? "" : "s"}</option>`
+                    )
+                    .join("")}
+                </select>
+              </label>
+              <label class="checkbox-row">
+                <input name="scheduledSyncEnabled" type="checkbox" ${optionsViewModel.config.scheduledSyncEnabled ? "checked" : ""} />
+                <span>Enable scheduled sync</span>
+              </label>
+              <label class="checkbox-row">
+                <input name="allowInsecureHttp" type="checkbox" ${optionsViewModel.config.allowInsecureHttp ? "checked" : ""} />
+                <span>Allow plain HTTP for trusted local networks</span>
+              </label>
+                </div>
+              </div>
+              <div class="actions">
+                <button id="save-settings" class="primary-button" type="submit">Save settings</button>
+                <button id="check-connection" class="secondary-button" type="button">Check connection</button>
+                <button id="sync-now" class="secondary-button" type="button" ${isRunning ? "disabled" : ""}>${isRunning ? "Syncing..." : "Sync now"}</button>
+              </div>
             </form>
           </section>
+        </section>
 
-          <section class="section section-compact">
-            <h2>Bundle tools</h2>
-            <p class="helper">Export the current local bookmark snapshot as an encoded OneSync bundle, or import an encoded bundle and apply it to ${escapeHtml(bookmarkSourceLabel.toLowerCase())}.</p>
-            <div class="tool-actions">
-              <button id="export-bundle" class="secondary-button" type="button">Export bundle</button>
-              <button id="import-bundle" class="secondary-button" type="button">Import bundle</button>
-            </div>
-            <textarea id="bundle-json" class="bundle-textarea" placeholder="Encoded bundle JSON appears here"></textarea>
+        <section class="content-section bundle-section" id="bundle-tools">
+          <div class="section-intro">
+            <h2>Bundle</h2>
+            <p class="section-copy">${bundleHeadingCopy}</p>
+          </div>
+          <section class="content-card bundle-card">
+              <div class="tool-actions">
+                <button id="export-bundle" class="secondary-button" type="button">Export bundle</button>
+                <button id="import-bundle" class="secondary-button" type="button">Import bundle</button>
+              </div>
+              <textarea id="bundle-json" class="bundle-textarea" placeholder="Encoded bundle JSON appears here"></textarea>
           </section>
+        </section>
 
-          <section class="section section-compact activity-section">
-            <h2>Activity log</h2>
+        <section class="content-section activity-section" id="activity-log">
+          <div class="section-intro">
+            <h2>Activity</h2>
+            <p class="section-copy">${activityHeadingCopy}</p>
+          </div>
+          <section class="content-card">
             ${renderActivityLog(optionsViewModel.activityLog)}
           </section>
-        </aside>
+        </section>
       </div>
     </main>
   `;
