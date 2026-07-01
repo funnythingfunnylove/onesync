@@ -28,3 +28,11 @@ Rebuilt the popup as a compact companion sheet while keeping sync behavior, book
 - Normalized the popup styling back to the approved warm monochrome and semantic palette, including the error border treatment.
 - Removed the duplicate version row from the facts grid to keep the popup more compact.
 - Re-ran `pnpm exec tsc --noEmit` after the fix.
+
+## Re-review Fix
+- Removed the popup's local state-classification helper so the state card now uses the background-provided `statusLabel` directly and no longer invents `Ready`/`healthy` semantics for non-running states.
+- Gated the progress card on `viewModel.isRunning` so progress only appears during an active sync, not just when a progress label is present.
+- Removed the negative letter spacing from popup headings to match the shared typography rule.
+
+## Verification
+- `pnpm exec tsc --noEmit` passed after the re-review fix.

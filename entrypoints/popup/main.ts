@@ -8,30 +8,6 @@ const extensionVersion = browser.runtime.getManifest().version;
 let popupMessage: string | null = null;
 let refreshHandle: number | null = null;
 
-function getPopupStateSummary(viewModel: Awaited<ReturnType<typeof loadPopupViewModel>>) {
-  if (viewModel.errorLabel) {
-    return {
-      tone: "warning",
-      badge: "Review",
-      heading: "Sync needs review"
-    };
-  }
-
-  if (viewModel.isRunning) {
-    return {
-      tone: "working",
-      badge: "Syncing",
-      heading: viewModel.statusLabel
-    };
-  }
-
-  return {
-    tone: viewModel.lastSyncLabel === "Never synced" ? "ready" : "healthy",
-    badge: "Ready",
-    heading: viewModel.statusLabel
-  };
-}
-
 function escapeHtml(value: string): string {
   return value
     .replaceAll("&", "&amp;")
@@ -60,7 +36,6 @@ async function renderPopup() {
   const progressPercent = viewModel.progressPercent ?? 0;
   const bookmarkStorageMode = getBookmarkStorageMode();
   const bookmarkSourceLabel = getBookmarkSourceLabel(bookmarkStorageMode);
-  const stateSummary = getPopupStateSummary(viewModel);
 
   root.innerHTML = `
     <section class="popup-panel">
@@ -68,12 +43,22 @@ async function renderPopup() {
         <h1>onesync</h1>
         <span class="popup-version">v${escapeHtml(extensionVersion)}</span>
       </header>
-      <section class="popup-state popup-state-${stateSummary.tone}">
-        <span class="popup-badge popup-badge-${stateSummary.tone}">${escapeHtml(stateSummary.badge)}</span>
-        <h2>${escapeHtml(stateSummary.heading)}</h2>
+      <section
+        class="popup-state ${
+          viewModel.errorLabel ? "popup-state-warning" : viewModel.isRunning ? "popup-state-working" : "popup-state-neutral"
+        }"
+      >
+        <span
+          class="popup-badge ${
+            viewModel.errorLabel ? "popup-badge-warning" : viewModel.isRunning ? "popup-badge-working" : "popup-badge-neutral"
+          }"
+        >
+          ${escapeHtml(viewModel.errorLabel ? "Review" : viewModel.isRunning ? "Syncing" : "Status")}
+        </span>
+        <h2>${escapeHtml(viewModel.statusLabel)}</h2>
       </section>
       ${
-        viewModel.progressLabel
+        viewModel.isRunning && viewModel.progressLabel
           ? `
             <div class="popup-progress-card">
               <div class="popup-progress-header">

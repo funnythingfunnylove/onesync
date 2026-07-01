@@ -67,7 +67,6 @@ a {
 .popup-state h2 {
   margin: 0;
   font-weight: 600;
-  letter-spacing: -0.02em;
 }
 
 .popup-header h1 {
@@ -109,19 +108,15 @@ a {
   text-transform: uppercase;
 }
 
-.popup-badge-healthy {
-  background: var(--green-bg);
-  color: var(--green);
-}
-
 .popup-badge-working {
   background: var(--blue-bg);
   color: var(--blue);
 }
 
-.popup-badge-ready {
-  background: var(--yellow-bg);
-  color: var(--yellow);
+.popup-badge-neutral {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--muted);
 }
 
 .popup-badge-warning {
@@ -129,16 +124,12 @@ a {
   color: var(--red);
 }
 
-.popup-state-healthy {
-  background: var(--green-bg);
-}
-
 .popup-state-working {
   background: var(--blue-bg);
 }
 
-.popup-state-ready {
-  background: var(--yellow-bg);
+.popup-state-neutral {
+  background: var(--surface-muted);
 }
 
 .popup-state-warning {
