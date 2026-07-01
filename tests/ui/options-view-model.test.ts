@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SyncConfig } from "../../src/core/state/config";
+import type { PrivateBookmarksViewState } from "../../src/core/private-bookmarks/view-state";
 
 const { sendMessageMock } = vi.hoisted(() => ({
   sendMessageMock: vi.fn()
@@ -14,6 +15,7 @@ vi.mock("wxt/browser", () => ({
 }));
 
 import {
+  buildPrivateBookmarkManagerViewModel,
   loadPrivateBookmarksViewState,
   mutatePrivateBookmarks,
   requestOptionsConnectionCheck,
@@ -30,6 +32,73 @@ const sampleConfig: SyncConfig = {
   intervalMinutes: 15,
   scheduledSyncEnabled: true,
   allowInsecureHttp: false
+};
+
+const samplePrivateState: PrivateBookmarksViewState = {
+  mode: "private",
+  selectedFolderId: "root-toolbar",
+  itemCount: 5,
+  modeHint: "This is your primary local bookmark workspace.",
+  folders: [
+    { id: "root-toolbar", title: "Bookmarks Bar", depth: 0 },
+    { id: "folder-a", title: "Folder A", depth: 1 },
+    { id: "folder-b", title: "Folder B", depth: 1 }
+  ],
+  currentFolder: {
+    id: "root-toolbar",
+    type: "folder",
+    title: "Bookmarks Bar",
+    depth: 0,
+    children: [
+      {
+        id: "folder-a",
+        type: "folder",
+        title: "Folder A",
+        depth: 1,
+        children: []
+      },
+      {
+        id: "bookmark-1",
+        type: "bookmark",
+        title: "Docs",
+        url: "https://example.com/docs",
+        depth: 1,
+        children: []
+      }
+    ]
+  },
+  tree: [
+    {
+      id: "root-toolbar",
+      type: "folder",
+      title: "Bookmarks Bar",
+      depth: 0,
+      children: [
+        {
+          id: "folder-a",
+          type: "folder",
+          title: "Folder A",
+          depth: 1,
+          children: []
+        },
+        {
+          id: "folder-b",
+          type: "folder",
+          title: "Folder B",
+          depth: 1,
+          children: []
+        },
+        {
+          id: "bookmark-1",
+          type: "bookmark",
+          title: "Docs",
+          url: "https://example.com/docs",
+          depth: 1,
+          children: []
+        }
+      ]
+    }
+  ]
 };
 
 beforeEach(() => {
@@ -76,6 +145,73 @@ describe("options view-model", () => {
         }
       }
     });
+  });
+
+  it("builds tabbed private bookmark manager data for the selected folder pane", () => {
+    const viewModel = buildPrivateBookmarkManagerViewModel(samplePrivateState, {
+      activeTab: "folders",
+      selectedNodeId: "bookmark-1"
+    });
+
+    expect(viewModel.tabs).toEqual([
+      { id: "folders", label: "Folders", isActive: true },
+      { id: "tree", label: "Tree", isActive: false }
+    ]);
+    expect(viewModel.selectedFolder).toMatchObject({
+      id: "root-toolbar",
+      title: "Bookmarks Bar"
+    });
+    expect(viewModel.folderEntries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "root-toolbar", isSelected: true }),
+        expect.objectContaining({ id: "folder-a", depth: 1 })
+      ])
+    );
+    expect(viewModel.visibleNodes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "folder-a", type: "folder" }),
+        expect.objectContaining({ id: "bookmark-1", type: "bookmark", isSelected: true })
+      ])
+    );
+    expect(viewModel.actions.rename.disabled).toBe(false);
+    expect(viewModel.actions.delete.disabled).toBe(false);
+    expect(viewModel.actions.move.disabled).toBe(false);
+    expect(viewModel.moveDestinations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "root-toolbar", isSelected: true }),
+        expect.objectContaining({ id: "folder-b", isSelected: false })
+      ])
+    );
+  });
+
+  it("protects root folders and preserves the tree tab selection for unavailable runtimes", () => {
+    const viewModel = buildPrivateBookmarkManagerViewModel(
+      {
+        ...samplePrivateState,
+        mode: "unavailable",
+        modeHint: "Bookmark access is unavailable in this browser runtime."
+      },
+      {
+        activeTab: "tree",
+        selectedNodeId: "root-toolbar"
+      }
+    );
+
+    expect(viewModel.tabs).toEqual([
+      { id: "folders", label: "Folders", isActive: false },
+      { id: "tree", label: "Tree", isActive: true }
+    ]);
+    expect(viewModel.visibleNodes[0]).toMatchObject({
+      id: "root-toolbar",
+      type: "folder",
+      depth: 0,
+      isSelected: true
+    });
+    expect(viewModel.actions.createFolder.disabled).toBe(true);
+    expect(viewModel.actions.createBookmark.disabled).toBe(true);
+    expect(viewModel.actions.rename.disabled).toBe(true);
+    expect(viewModel.actions.move.disabled).toBe(true);
+    expect(viewModel.actions.delete.disabled).toBe(true);
   });
 
   it("saves the current config before requesting sync", async () => {

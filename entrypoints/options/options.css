@@ -47,6 +47,11 @@ body {
   margin: 0 0 8px;
 }
 
+.section h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
 .hero-copy,
 .helper,
 .empty-state {
@@ -116,6 +121,29 @@ body {
   padding: 24px;
 }
 
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.section-badge {
+  display: grid;
+  gap: 4px;
+  min-width: 140px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: rgba(30, 41, 59, 0.76);
+  text-align: right;
+}
+
+.section-badge span {
+  font-size: 12px;
+  color: #94a3b8;
+}
+
 .form-grid {
   display: grid;
   gap: 14px;
@@ -180,6 +208,16 @@ body {
   background: #1e293b;
 }
 
+.primary-button:disabled,
+.secondary-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.danger-button {
+  background: #7f1d1d;
+}
+
 .bundle-textarea {
   min-height: 220px;
   margin-top: 14px;
@@ -226,9 +264,146 @@ body {
   background: linear-gradient(90deg, #22d3ee 0%, #67e8f9 100%);
 }
 
+.private-manager-section {
+  display: grid;
+  gap: 18px;
+}
+
+.private-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: end;
+}
+
+.private-move-control {
+  display: grid;
+  gap: 6px;
+  min-width: 220px;
+}
+
+.private-move-control span {
+  font-size: 13px;
+  color: #cbd5e1;
+}
+
+.private-move-control select {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  border-radius: 8px;
+  background: #0f172a;
+  color: #e2e8f0;
+}
+
+.private-layout {
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  gap: 18px;
+}
+
+.private-pane {
+  display: grid;
+  gap: 12px;
+  min-height: 0;
+  padding: 16px;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.72);
+}
+
+.pane-heading {
+  display: grid;
+  gap: 4px;
+}
+
+.pane-heading p {
+  margin: 0;
+  color: #94a3b8;
+  line-height: 1.5;
+}
+
+.private-folder-list,
+.private-node-list {
+  display: grid;
+  gap: 8px;
+}
+
+.private-folder-button,
+.private-node-button,
+.private-tab {
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 8px;
+  background: rgba(30, 41, 59, 0.82);
+  color: inherit;
+}
+
+.private-folder-button,
+.private-node-button {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+  padding: 12px 14px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.private-folder-button {
+  padding-left: calc(14px + (var(--private-depth) * 14px));
+}
+
+.private-node-button {
+  padding-left: calc(14px + (var(--private-depth) * 16px));
+}
+
+.private-folder-button.is-selected,
+.private-node-button.is-selected,
+.private-tab.is-active {
+  border-color: rgba(103, 232, 249, 0.48);
+  background: rgba(8, 47, 73, 0.82);
+}
+
+.private-node-header {
+  display: grid;
+  gap: 4px;
+}
+
+.private-node-type {
+  font-size: 11px;
+  text-transform: uppercase;
+  color: #67e8f9;
+}
+
+.private-node-meta {
+  color: #94a3b8;
+  overflow-wrap: anywhere;
+}
+
+.private-tabs {
+  display: inline-flex;
+  gap: 8px;
+}
+
+.private-tab {
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
 @media (max-width: 900px) {
   .hero,
-  .section-grid {
+  .section-grid,
+  .private-layout {
     grid-template-columns: 1fr;
+  }
+
+  .section-header {
+    flex-direction: column;
+  }
+
+  .section-badge {
+    min-width: 0;
+    text-align: left;
   }
 }
