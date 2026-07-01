@@ -95,7 +95,7 @@ async function renderPopup() {
         <button id="sync-now" class="popup-primary-button" type="button" ${
           viewModel.canSync && !viewModel.isRunning ? "" : "disabled"
         }>
-          ${viewModel.isRunning ? "Syncing..." : "Sync"}
+          Sync
         </button>
         <a class="popup-secondary-button" href="/options.html" target="_blank" rel="noreferrer">Settings</a>
       </div>
@@ -112,7 +112,6 @@ async function renderPopup() {
   const syncNowButton = document.querySelector<HTMLButtonElement>("#sync-now");
   syncNowButton?.addEventListener("click", async () => {
     syncNowButton.disabled = true;
-    syncNowButton.textContent = "Starting...";
     popupMessage = null;
 
     void requestManualSync().catch(async (error) => {

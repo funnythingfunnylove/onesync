@@ -36,3 +36,10 @@ Rebuilt the popup as a compact companion sheet while keeping sync behavior, book
 
 ## Verification
 - `pnpm exec tsc --noEmit` passed after the re-review fix.
+
+## Final Task 2 Fix
+- Kept the primary CTA label fixed at `Sync` in all popup states and removed the runtime button text swap to `Syncing...` / `Starting...`.
+- Tightened the popup uppercase labels by removing the remaining positive letter spacing so the typography stays closer to the shared rule.
+
+## Verification
+- `pnpm exec tsc --noEmit` passed after the final fix.
