@@ -25,18 +25,10 @@ function getPopupStateSummary(viewModel: Awaited<ReturnType<typeof loadPopupView
     };
   }
 
-  if (viewModel.lastSyncLabel === "Never") {
-    return {
-      tone: "ready",
-      badge: "Ready",
-      heading: "First sync pending"
-    };
-  }
-
   return {
-    tone: "healthy",
+    tone: viewModel.lastSyncLabel === "Never synced" ? "ready" : "healthy",
     badge: "Ready",
-    heading: "Standing by"
+    heading: viewModel.statusLabel
   };
 }
 
@@ -107,10 +99,6 @@ async function renderPopup() {
         <div class="popup-fact-row">
           <dt>Bookmark source</dt>
           <dd>${escapeHtml(bookmarkSourceLabel)}</dd>
-        </div>
-        <div class="popup-fact-row">
-          <dt>Version</dt>
-          <dd>${escapeHtml(extensionVersion)}</dd>
         </div>
       </dl>
       ${

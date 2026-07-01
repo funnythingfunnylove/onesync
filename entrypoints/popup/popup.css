@@ -242,7 +242,7 @@ a {
 }
 
 .popup-notice-error {
-  border-color: #f1d0ce;
+  border-color: var(--red);
   background: var(--red-bg);
   color: var(--red);
 }
@@ -288,10 +288,15 @@ a {
   white-space: nowrap;
 }
 
-.popup-primary-button:hover:not(:disabled),
+.popup-primary-button:hover:not(:disabled) {
+  border-color: var(--text);
+  background-color: var(--text);
+  color: #ffffff;
+}
+
 .popup-secondary-button:hover {
-  border-color: #d9d9d9;
-  background-color: #f3f2ee;
+  border-color: var(--border);
+  background-color: var(--surface-muted);
 }
 
 .popup-primary-button:focus-visible,
