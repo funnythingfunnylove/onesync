@@ -88,7 +88,7 @@ async function renderPopup() {
       </dl>
       ${
         bannerMessage
-          ? `<p class="popup-notice popup-notice-error">${escapeHtml(bannerMessage)}</p>`
+          ? `<p class="popup-notice popup-notice-error" role="alert" aria-live="assertive" aria-atomic="true">${escapeHtml(bannerMessage)}</p>`
           : ""
       }
       <div class="popup-actions">

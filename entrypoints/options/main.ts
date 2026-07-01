@@ -206,14 +206,14 @@ function readConfigFromForm(form: HTMLFormElement, previousConfig: SyncConfig): 
 }
 
 function getSyncOverview(syncState: SyncState): {
-  tone: "healthy" | "working" | "warning" | "ready";
+  tone: "healthy" | "working" | "error" | "ready";
   badge: string;
   heading: string;
   note: string | null;
 } {
   if (syncState.status === "error") {
     return {
-      tone: "warning",
+      tone: "error",
       badge: "Review",
       heading: "Sync needs review",
       note: syncState.lastError ?? "Check remote settings"
@@ -400,7 +400,7 @@ async function renderOptionsPage(privateBookmarksStateOverride?: Awaited<ReturnT
       <div class="workspace-main">
         ${
           pageMessage
-            ? `<p class="notice notice-${pageMessage.type}">${escapeHtml(pageMessage.text)}</p>`
+            ? `<p class="notice notice-${pageMessage.type}" role="${pageMessage.type === "error" ? "alert" : "status"}" aria-live="${pageMessage.type === "error" ? "assertive" : "polite"}" aria-atomic="true">${escapeHtml(pageMessage.text)}</p>`
             : ""
         }
 

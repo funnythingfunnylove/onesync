@@ -6,7 +6,7 @@
   --surface-muted: #f7f6f3;
   --border: #eaeaea;
   --text: #2f3437;
-  --muted: #787774;
+  --muted: #757471;
   --blue-bg: #e1f3fe;
   --blue-text: #1f6c9f;
   --green-bg: #edf3ec;
@@ -118,7 +118,7 @@ a {
 .inspector-action-group > span {
   font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.08em;
+  letter-spacing: 0;
   text-transform: uppercase;
   color: var(--muted);
 }
@@ -163,7 +163,7 @@ a {
 .nav-status-line span {
   font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.08em;
+  letter-spacing: 0;
   text-transform: uppercase;
   color: var(--muted);
 }
@@ -182,7 +182,7 @@ a {
   border-radius: 999px;
   font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.08em;
+  letter-spacing: 0;
   text-transform: uppercase;
 }
 
@@ -202,9 +202,13 @@ a {
   color: var(--blue-text);
 }
 
-.status-pill-warning {
-  background: var(--yellow-bg);
-  color: var(--yellow-text);
+.status-pill-error {
+  background: var(--red-bg);
+  color: var(--red-text);
+}
+
+.nav-status-card-error {
+  background: var(--red-bg);
 }
 
 .nav-progress-card {
@@ -509,6 +513,7 @@ a {
 .private-node-button.is-selected {
   border-color: var(--border);
   background: var(--surface);
+  box-shadow: inset 2px 0 0 var(--text);
 }
 
 .private-folder-row {
@@ -788,7 +793,7 @@ a {
 .activity-level {
   font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.08em;
+  letter-spacing: 0;
   text-transform: uppercase;
 }
 
