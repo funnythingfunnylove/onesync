@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="onesync icon">
+  <defs>
+    <linearGradient id="syncAccent" x1="16" y1="16" x2="52" y2="52" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#22d3ee" />
+      <stop offset="1" stop-color="#38bdf8" />
+    </linearGradient>
+  </defs>
+
+  <rect width="64" height="64" rx="14" fill="#020617" />
+
+  <path
+    d="M22 14c-1.66 0-3 1.34-3 3v30.38c0 1.61 1.84 2.54 3.15 1.59L32 41.84l9.85 7.13c1.31.95 3.15.02 3.15-1.59V17c0-1.66-1.34-3-3-3H22Z"
+    fill="#e2e8f0"
+  />
+
+  <path
+    d="M27 22h10.5a8.5 8.5 0 0 1 7.92 5.42"
+    fill="none"
+    stroke="url(#syncAccent)"
+    stroke-linecap="round"
+    stroke-width="4.5"
+  />
+  <path
+    d="m43.1 24.1 4.9 1.15-2.18 4.54"
+    fill="none"
+    stroke="url(#syncAccent)"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    stroke-width="4.5"
+  />
+
+  <path
+    d="M37 34H26.5a8.5 8.5 0 0 1-7.92-5.42"
+    fill="none"
+    stroke="url(#syncAccent)"
+    stroke-linecap="round"
+    stroke-width="4.5"
+  />
+  <path
+    d="m20.9 31.9-4.9-1.15 2.18-4.54"
+    fill="none"
+    stroke="url(#syncAccent)"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    stroke-width="4.5"
+  />
+</svg>

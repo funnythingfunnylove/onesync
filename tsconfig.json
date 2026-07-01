@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "types": [
+      "vitest/globals"
+    ]
+  },
+  "include": [
+    ".wxt/wxt.d.ts",
+    "entrypoints",
+    "src",
+    "tests",
+    "wxt.config.ts",
+    "vitest.config.ts"
+  ]
+}

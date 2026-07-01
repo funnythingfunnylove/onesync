@@ -1,0 +1,32 @@
+{
+  "name": "onesync",
+  "version": "0.1.3",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wxt",
+    "dev:firefox": "wxt -b firefox",
+    "build": "wxt build",
+    "build:all": "pnpm wxt build && pnpm wxt build -b firefox && pnpm wxt build -b safari",
+    "build:firefox": "wxt build -b firefox",
+    "build:safari": "wxt build -b safari",
+    "zip": "wxt zip",
+    "zip:firefox": "wxt zip -b firefox",
+    "package:safari": "node ./scripts/package-safari.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "verify": "pnpm test && pnpm exec tsc --noEmit && pnpm build:all && node ./scripts/verify-build-artifacts.mjs",
+    "postinstall": "wxt prepare"
+  },
+  "dependencies": {
+    "fflate": "^0.8.3",
+    "webextension-polyfill": "^0.12.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/webextension-polyfill": "^0.12.5",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.9",
+    "wxt": "^0.20.27"
+  }
+}
