@@ -59,8 +59,22 @@ async function handleRuntimeMessage(message: RuntimeMessage): Promise<unknown> {
       const mode = getBookmarkStorageMode();
       const current = await loadPrivateManagerBundle(config);
       const next = applyPrivateBookmarkOperation(current, message.payload.operation, config.deviceId);
-      const saved = await savePrivateManagerBundle(config, next, mode);
-      return buildPrivateBookmarksViewState(saved, mode);
+      try {
+        const saved = await savePrivateManagerBundle(config, next, mode);
+        return buildPrivateBookmarksViewState(saved, mode);
+      } catch (error) {
+        const messageText = error instanceof Error ? error.message : String(error);
+
+        if (/browser bookmarks not updated/i.test(messageText)) {
+          await appendActivityLog({
+            level: "error",
+            message: messageText,
+            createdAt: new Date().toISOString()
+          });
+        }
+
+        throw error;
+      }
     }
     case "onesync:save-config": {
       await setConfig(message.payload);

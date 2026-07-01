@@ -140,4 +140,11 @@ describe("private bookmark view-state", () => {
     expect(state.mode).toBe("unavailable");
     expect(state.modeHint).toBe("Bookmark access is unavailable in this browser runtime.");
   });
+
+  it("reports browser-sensitive mode hints for private and native carriers", () => {
+    const bundle = createBundle();
+
+    expect(buildPrivateBookmarksViewState(bundle, "private").modeHint).toMatch(/primary local bookmark workspace/i);
+    expect(buildPrivateBookmarksViewState(bundle, "native").modeHint).toMatch(/applied back to browser bookmarks/i);
+  });
 });

@@ -33,6 +33,7 @@ export const BOOKMARKS_API_UNAVAILABLE_MESSAGE =
 
 const SYNTHETIC_ROOT_PREFIX = "onesync.synthetic";
 const PRIVATE_BOOKMARKS_KEY = "onesync.privateBookmarks";
+const PRIVATE_BOOKMARKS_NATIVE_FALLBACK_KEY = "onesync.privateBookmarksNativeFallback";
 const SYNTHETIC_ROOT_TITLES: Record<SemanticRoot, string> = {
   toolbar: "Bookmarks Bar",
   menu: "Bookmarks Menu",
@@ -421,6 +422,29 @@ async function savePrivateBookmarkBundle(bundle: BookmarkBundle): Promise<Bookma
   return normalizedBundle;
 }
 
+async function saveNativeFallbackBundle(bundle: BookmarkBundle): Promise<BookmarkBundle> {
+  const storageArea = requirePrivateBookmarkStorage();
+  const normalizedBundle = normalizeBundle(bundle);
+  await storageArea.set({ [PRIVATE_BOOKMARKS_NATIVE_FALLBACK_KEY]: normalizedBundle });
+  return normalizedBundle;
+}
+
+export async function loadSavedSharedBundleFallback(): Promise<BookmarkBundle | null> {
+  const storageArea = requirePrivateBookmarkStorage();
+  const storedValue = (await storageArea.get(PRIVATE_BOOKMARKS_NATIVE_FALLBACK_KEY))[PRIVATE_BOOKMARKS_NATIVE_FALLBACK_KEY];
+
+  if (!storedValue) {
+    return null;
+  }
+
+  return normalizeBundle(storedValue as BookmarkBundle);
+}
+
+export async function clearSavedSharedBundleFallback(): Promise<void> {
+  const storageArea = requirePrivateBookmarkStorage();
+  await storageArea.set({ [PRIVATE_BOOKMARKS_NATIVE_FALLBACK_KEY]: null });
+}
+
 export async function listLocalBookmarks(
   config: SyncConfig,
   options: BookmarkOperationOptions = {}
@@ -590,5 +614,18 @@ export async function applySharedBundleLocally(bundle: BookmarkBundle, mode: Boo
     throw new Error(BOOKMARKS_API_UNAVAILABLE_MESSAGE);
   }
 
-  await applyBundleToBookmarks(bundle);
+  if (mode === "private") {
+    await applyBundleToBookmarks(bundle);
+    await clearSavedSharedBundleFallback();
+    return;
+  }
+
+  try {
+    await applyBundleToBookmarks(bundle);
+    await clearSavedSharedBundleFallback();
+  } catch (error) {
+    await saveNativeFallbackBundle(bundle);
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Shared data saved, browser bookmarks not updated: ${message}`);
+  }
 }

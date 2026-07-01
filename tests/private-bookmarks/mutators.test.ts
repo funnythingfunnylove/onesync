@@ -207,6 +207,9 @@ describe("private bookmark mutators", () => {
       children: ["bookmark-1"],
       updatedAt: "2026-07-01T12:00:00.000Z"
     });
+    expect(next.nodes["bookmark-1"]).toMatchObject({
+      updatedAt: "2026-07-01T12:00:00.000Z"
+    });
   });
 
   it("rejects moving a folder into its own descendant", () => {

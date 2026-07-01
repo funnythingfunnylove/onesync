@@ -447,6 +447,27 @@ describe("private manager carrier integration", () => {
     expect(storageState["onesync.privateManagerBundle"]).toBeUndefined();
   });
 
+  it("preserves the saved shared bundle when native apply fails on Chrome or Firefox", async () => {
+    removeMock.mockRejectedValueOnce(new Error("Native bookmarks write blocked"));
+
+    await expect(savePrivateManagerBundle(sampleConfig, updatedNativeBundle, "native")).rejects.toThrow(/not updated/i);
+    expect(storageState["onesync.privateBookmarksNativeFallback"]).toMatchObject({
+      roots: updatedNativeBundle.roots
+    });
+
+    const bundle = await loadPrivateManagerBundle(sampleConfig);
+    const importedBookmark = Object.values(bundle.nodes).find(
+      (node) => node.type === "bookmark" && node.title === "Imported Bookmark"
+    );
+
+    expect(importedBookmark).toMatchObject({
+      title: "Imported Bookmark",
+      url: "https://imported.example.com/"
+    });
+    expect(bundle.deviceId).toBe(sampleConfig.deviceId);
+    expect(bundle.revision).toMatch(/#device-1#snapshot$/);
+  });
+
   it("accepts the private bookmark runtime messages", () => {
     const message: RuntimeMessage = { type: "onesync:get-private-bookmarks" };
     expect(message.type).toBe("onesync:get-private-bookmarks");

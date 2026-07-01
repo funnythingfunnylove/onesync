@@ -499,6 +499,79 @@ describe("bookmark adapter", () => {
     });
   });
 
+  it("preserves the saved shared bundle when native apply fails on Chrome or Firefox", async () => {
+    removeMock.mockRejectedValueOnce(new Error("Native bookmarks write blocked"));
+
+    await expect(
+      applySharedBundleLocally(
+        {
+          kind: "onesync.bookmarks",
+          schemaVersion: 1,
+          revision: "2026-07-01T00:00:00.000Z#device-1#private",
+          deviceId: "device-1",
+          generatedAt: "2026-07-01T00:00:00.000Z",
+          roots: {
+            toolbar: "toolbar-root",
+            menu: "menu-root",
+            mobile: "mobile-root",
+            unfiled: "menu-root"
+          },
+          nodes: {
+            "toolbar-root": {
+              id: "toolbar-root",
+              type: "folder",
+              title: "Bookmarks Bar",
+              children: ["bookmark-2"],
+              addedAt: "2026-07-01T00:00:00.000Z",
+              updatedAt: "2026-07-01T00:00:00.000Z"
+            },
+            "menu-root": {
+              id: "menu-root",
+              type: "folder",
+              title: "Bookmarks Menu",
+              children: [],
+              addedAt: "2026-07-01T00:00:00.000Z",
+              updatedAt: "2026-07-01T00:00:00.000Z"
+            },
+            "mobile-root": {
+              id: "mobile-root",
+              type: "folder",
+              title: "Mobile Bookmarks",
+              children: [],
+              addedAt: "2026-07-01T00:00:00.000Z",
+              updatedAt: "2026-07-01T00:00:00.000Z"
+            },
+            "bookmark-2": {
+              id: "bookmark-2",
+              type: "bookmark",
+              title: "Recovered Bookmark",
+              url: "https://recovered.example.com/",
+              addedAt: "2026-07-01T00:00:00.000Z",
+              updatedAt: "2026-07-01T00:00:00.000Z"
+            }
+          },
+          tombstones: [],
+          meta: {
+            client: "onesync",
+            clientVersion: "0.1.3"
+          }
+        },
+        "native"
+      )
+    ).rejects.toThrow(/not updated/i);
+
+    expect(storageSetMock).toHaveBeenCalledWith({
+      "onesync.privateBookmarksNativeFallback": expect.objectContaining({
+        roots: {
+          toolbar: "toolbar-root",
+          menu: "menu-root",
+          mobile: "mobile-root",
+          unfiled: "menu-root"
+        }
+      })
+    });
+  });
+
   it("creates an empty private bookmark bundle when storage has no Safari fallback data yet", async () => {
     storageGetMock.mockResolvedValueOnce({});
     (browserMock as { bookmarks?: unknown }).bookmarks = undefined;

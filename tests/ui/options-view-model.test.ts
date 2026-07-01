@@ -288,6 +288,24 @@ describe("options view-model", () => {
     expect(viewModel.actions.delete.disabled).toBe(true);
   });
 
+  it("surfaces browser-specific mode hints without changing manager counts", () => {
+    const viewModel = buildPrivateBookmarkManagerViewModel(
+      {
+        ...samplePrivateState,
+        mode: "native",
+        modeHint: "Changes here update shared data and are applied back to browser bookmarks."
+      },
+      {
+        activeTab: "folders",
+        selectedNodeId: "bookmark-1"
+      }
+    );
+
+    expect(viewModel.mode).toBe("native");
+    expect(viewModel.modeHint).toMatch(/applied back to browser bookmarks/i);
+    expect(viewModel.itemCount).toBe(samplePrivateState.itemCount);
+  });
+
   it("saves the current config before requesting sync", async () => {
     await saveAndSyncOptionsConfig(sampleConfig);
 
