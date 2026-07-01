@@ -1,12 +1,44 @@
 import { browser } from "wxt/browser";
 import { getBookmarkStorageMode } from "../../src/core/browser/bookmarks";
-import { getBookmarkSourceDescription, getBookmarkSourceLabel } from "../../src/ui/bookmark-source";
+import { getBookmarkSourceLabel } from "../../src/ui/bookmark-source";
 import { loadPopupViewModel, requestManualSync } from "../../src/ui/view-models/popup";
 
 const root = document.querySelector<HTMLDivElement>("#app");
 const extensionVersion = browser.runtime.getManifest().version;
 let popupMessage: string | null = null;
 let refreshHandle: number | null = null;
+
+function getPopupStateSummary(viewModel: Awaited<ReturnType<typeof loadPopupViewModel>>) {
+  if (viewModel.errorLabel) {
+    return {
+      tone: "warning",
+      badge: "Review",
+      heading: "Sync needs review"
+    };
+  }
+
+  if (viewModel.isRunning) {
+    return {
+      tone: "working",
+      badge: "Syncing",
+      heading: viewModel.statusLabel
+    };
+  }
+
+  if (viewModel.lastSyncLabel === "Never") {
+    return {
+      tone: "ready",
+      badge: "Ready",
+      heading: "First sync pending"
+    };
+  }
+
+  return {
+    tone: "healthy",
+    badge: "Ready",
+    heading: "Standing by"
+  };
+}
 
 function escapeHtml(value: string): string {
   return value
@@ -36,57 +68,64 @@ async function renderPopup() {
   const progressPercent = viewModel.progressPercent ?? 0;
   const bookmarkStorageMode = getBookmarkStorageMode();
   const bookmarkSourceLabel = getBookmarkSourceLabel(bookmarkStorageMode);
-  const bookmarkSourceDescription = getBookmarkSourceDescription(bookmarkStorageMode);
+  const stateSummary = getPopupStateSummary(viewModel);
 
   root.innerHTML = `
-    <section class="panel">
-      <header class="panel-header">
-        <div>
-          <p class="eyebrow">Bookmark Sync</p>
-          <h1>onesync</h1>
-        </div>
-        <a class="settings-link" href="/options.html" target="_blank" rel="noreferrer">Settings</a>
+    <section class="popup-panel">
+      <header class="popup-header">
+        <h1>onesync</h1>
+        <span class="popup-version">v${escapeHtml(extensionVersion)}</span>
       </header>
-      <div class="status-grid">
-        <div class="status-item">
-          <span class="label">Status</span>
-          <strong>${escapeHtml(viewModel.statusLabel)}</strong>
-        </div>
-        <div class="status-item">
-          <span class="label">Last sync</span>
-          <strong>${escapeHtml(viewModel.lastSyncLabel)}</strong>
-        </div>
-        <div class="status-item">
-          <span class="label">Bookmark source</span>
-          <strong>${escapeHtml(bookmarkSourceLabel)}</strong>
-        </div>
-      </div>
+      <section class="popup-state popup-state-${stateSummary.tone}">
+        <span class="popup-badge popup-badge-${stateSummary.tone}">${escapeHtml(stateSummary.badge)}</span>
+        <h2>${escapeHtml(stateSummary.heading)}</h2>
+      </section>
       ${
         viewModel.progressLabel
           ? `
-            <div class="progress-card">
-              <div class="progress-header">
+            <div class="popup-progress-card">
+              <div class="popup-progress-header">
                 <span>${escapeHtml(viewModel.progressLabel)}</span>
                 <strong>${progressPercent}%</strong>
               </div>
-              <div class="progress-track" aria-hidden="true">
-                <div class="progress-fill" style="width: ${progressPercent}%"></div>
+              <div class="popup-progress-track" aria-hidden="true">
+                <div class="popup-progress-fill" style="width: ${progressPercent}%"></div>
               </div>
             </div>
           `
           : ""
       }
+      <dl class="popup-facts">
+        <div class="popup-fact-row">
+          <dt>Last sync</dt>
+          <dd>${escapeHtml(viewModel.lastSyncLabel)}</dd>
+        </div>
+        <div class="popup-fact-row">
+          <dt>Status</dt>
+          <dd>${escapeHtml(viewModel.statusLabel)}</dd>
+        </div>
+        <div class="popup-fact-row">
+          <dt>Bookmark source</dt>
+          <dd>${escapeHtml(bookmarkSourceLabel)}</dd>
+        </div>
+        <div class="popup-fact-row">
+          <dt>Version</dt>
+          <dd>${escapeHtml(extensionVersion)}</dd>
+        </div>
+      </dl>
       ${
         bannerMessage
-          ? `<p class="error-banner">${escapeHtml(bannerMessage)}</p>`
-          : `<p class="helper">${escapeHtml(bookmarkSourceDescription)}</p>`
+          ? `<p class="popup-notice popup-notice-error">${escapeHtml(bannerMessage)}</p>`
+          : ""
       }
-      <p class="app-version">Version ${escapeHtml(extensionVersion)}</p>
-      <button id="sync-now" class="primary-button" type="button" ${
-        viewModel.canSync && !viewModel.isRunning ? "" : "disabled"
-      }>
-        ${viewModel.isRunning ? "Syncing..." : "Sync now"}
-      </button>
+      <div class="popup-actions">
+        <button id="sync-now" class="popup-primary-button" type="button" ${
+          viewModel.canSync && !viewModel.isRunning ? "" : "disabled"
+        }>
+          ${viewModel.isRunning ? "Syncing..." : "Sync"}
+        </button>
+        <a class="popup-secondary-button" href="/options.html" target="_blank" rel="noreferrer">Settings</a>
+      </div>
     </section>
   `;
 
@@ -104,9 +143,9 @@ async function renderPopup() {
     popupMessage = null;
 
     void requestManualSync().catch(async (error) => {
-        popupMessage = error instanceof Error ? error.message : "Sync failed";
-        await renderPopup();
-      });
+      popupMessage = error instanceof Error ? error.message : "Sync failed";
+      await renderPopup();
+    });
 
     scheduleRefresh(80);
   });
