@@ -7,7 +7,9 @@ import type { PrivateBookmarkOperation } from "../../src/core/shared/types";
 import { getBookmarkSourceLabel } from "../../src/ui/bookmark-source";
 import {
   buildPrivateBookmarkManagerViewModel,
+  buildPrivateBookmarkEditDraft,
   exportEncodedBundle,
+  getPrivateBookmarkLinkHref,
   importEncodedBundle,
   loadOptionsViewModel,
   loadPrivateBookmarksViewState,
@@ -154,6 +156,7 @@ function renderPrivateVisibleNodes(
           const draft = editingNodeId === node.id ? privateEditDrafts.get(node.id) : undefined;
           const draftTitle = draft?.title ?? node.title;
           const draftUrl = draft?.url ?? node.url ?? "";
+          const bookmarkLinkHref = getPrivateBookmarkLinkHref(node.url);
 
           return `
             <div class="private-node-row private-node-row-${node.type}">
@@ -217,16 +220,16 @@ function renderPrivateVisibleNodes(
                           </span>
                         </button>
                         ${
-                          node.type === "bookmark" && node.url
+                          node.type === "bookmark" && bookmarkLinkHref
                             ? `
                               <a
                                 class="private-node-link"
-                                href="${escapeHtml(node.url)}"
+                                href="${escapeHtml(bookmarkLinkHref)}"
                                 target="_blank"
                                 rel="noreferrer noopener"
-                                title="${escapeHtml(node.url)}"
+                                title="${escapeHtml(node.url ?? bookmarkLinkHref)}"
                               >
-                                ${escapeHtml(node.url)}
+                                ${escapeHtml(node.url ?? bookmarkLinkHref)}
                               </a>
                             `
                             : ""
@@ -288,6 +291,22 @@ function filterPrivateVisibleNodes<T extends { title: string; url?: string }>(
 
     return haystack.includes(normalizedQuery);
   });
+}
+
+function rememberActivePrivateEditDraft(privateBookmarksState: Awaited<ReturnType<typeof loadPrivateBookmarksViewState>>): void {
+  if (!editingPrivateNodeId) {
+    return;
+  }
+
+  const form = Array.from(document.querySelectorAll<HTMLFormElement>("[data-private-edit-form-id]"))
+    .find((candidate) => candidate.dataset.privateEditFormId === editingPrivateNodeId);
+  const node = findPrivateNodeById(privateBookmarksState.tree, editingPrivateNodeId);
+
+  if (!form || !node) {
+    return;
+  }
+
+  privateEditDrafts.set(editingPrivateNodeId, buildPrivateBookmarkEditDraft(node.type, new FormData(form)));
 }
 
 function readConfigFromForm(form: HTMLFormElement, previousConfig: SyncConfig): SyncConfig {
@@ -712,6 +731,7 @@ async function renderOptionsPage(
     }
 
     refreshHandle = window.setTimeout(() => {
+      rememberActivePrivateEditDraft(privateBookmarksState);
       void renderOptionsPage();
     }, 700);
   } else if (refreshHandle !== null) {
@@ -886,10 +906,7 @@ async function renderOptionsPage(
     const title = String(formData.get("title") ?? "").trim();
     const draftUrl = String(formData.get("url") ?? "");
 
-    privateEditDrafts.set(editingNodeId, {
-      title,
-      ...(node.type === "bookmark" ? { url: draftUrl } : {})
-    });
+    privateEditDrafts.set(editingNodeId, buildPrivateBookmarkEditDraft(node.type, formData));
 
     if (!title) {
       pageMessage = { type: "error", text: "Title is required." };

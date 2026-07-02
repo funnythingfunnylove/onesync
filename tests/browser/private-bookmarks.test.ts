@@ -189,7 +189,11 @@ vi.mock("wxt/browser", () => ({
   browser: browserMock
 }));
 
-import { applyBundleToBookmarks, applySharedBundleLocally } from "../../src/core/browser/bookmarks";
+import {
+  applyBundleToBookmarks,
+  applySharedBundleLocally,
+  loadSharedBookmarkBundle
+} from "../../src/core/browser/bookmarks";
 import { loadPrivateManagerBundle, savePrivateManagerBundle } from "../../src/core/browser/private-bookmarks";
 
 const sampleConfig: SyncConfig = {
@@ -534,6 +538,25 @@ describe("private manager carrier integration", () => {
       title: "Imported Bookmark",
       url: "https://imported.example.com/"
     });
+    expect(bundle.deviceId).toBe(sampleConfig.deviceId);
+    expect(bundle.revision).toMatch(/#device-1#snapshot$/);
+  });
+
+  it("serves the native fallback bundle to shared sync and export loaders after native apply fails", async () => {
+    removeMock.mockRejectedValueOnce(new Error("Native bookmarks write blocked"));
+
+    await expect(savePrivateManagerBundle(sampleConfig, updatedNativeBundle, "native")).rejects.toThrow(/not updated/i);
+
+    const bundle = await loadSharedBookmarkBundle(sampleConfig);
+    const importedBookmark = Object.values(bundle.nodes).find(
+      (node) => node.type === "bookmark" && node.title === "Imported Bookmark"
+    );
+
+    expect(importedBookmark).toMatchObject({
+      title: "Imported Bookmark",
+      url: "https://imported.example.com/"
+    });
+    expect(bundle.nodes["native-bookmark-1"]).toBeUndefined();
     expect(bundle.deviceId).toBe(sampleConfig.deviceId);
     expect(bundle.revision).toMatch(/#device-1#snapshot$/);
   });

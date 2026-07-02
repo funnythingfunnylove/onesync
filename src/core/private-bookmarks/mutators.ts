@@ -239,6 +239,31 @@ function renameNode(bundle: BookmarkBundle, nodeId: string, title: string, devic
   return normalizeBundle(stampBundle(next, deviceId, generatedAt));
 }
 
+function updateBookmark(
+  bundle: BookmarkBundle,
+  nodeId: string,
+  title: string,
+  url: string,
+  deviceId: string
+): BookmarkBundle {
+  const next = cloneBundle(bundle);
+  const generatedAt = new Date().toISOString();
+  const node = getNode(next, nodeId);
+
+  if (node.type !== "bookmark") {
+    throw new Error("Only bookmark items can update a URL");
+  }
+
+  next.nodes[nodeId] = {
+    ...node,
+    title,
+    url,
+    updatedAt: generatedAt
+  };
+
+  return normalizeBundle(stampBundle(next, deviceId, generatedAt));
+}
+
 function deleteNode(bundle: BookmarkBundle, nodeId: string, deviceId: string): BookmarkBundle {
   const next = cloneBundle(bundle);
   const generatedAt = new Date().toISOString();
@@ -319,6 +344,8 @@ export function applyPrivateBookmarkOperation(
       return createFolder(bundle, operation.parentId, operation.title, deviceId);
     case "create-bookmark":
       return createBookmark(bundle, operation.parentId, operation.title, operation.url, deviceId);
+    case "update-bookmark":
+      return updateBookmark(bundle, operation.nodeId, operation.title, operation.url, deviceId);
     case "rename-node":
       return renameNode(bundle, operation.nodeId, operation.title, deviceId);
     case "delete-node":

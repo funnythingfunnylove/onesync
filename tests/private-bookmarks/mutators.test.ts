@@ -158,6 +158,27 @@ describe("private bookmark mutators", () => {
     });
   });
 
+  it("updates a bookmark title and url together", () => {
+    const bundle = createBundle();
+
+    const next = applyPrivateBookmarkOperation(
+      bundle,
+      {
+        type: "update-bookmark",
+        nodeId: "bookmark-1",
+        title: "Docs",
+        url: "https://example.com/docs"
+      },
+      "device-1"
+    );
+
+    expect(next.nodes["bookmark-1"]).toMatchObject({
+      title: "Docs",
+      url: "https://example.com/docs",
+      updatedAt: "2026-07-01T12:00:00.000Z"
+    });
+  });
+
   it("deletes a node subtree and records tombstones", () => {
     const bundle = createBundle();
 

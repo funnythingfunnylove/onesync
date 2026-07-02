@@ -475,6 +475,17 @@ async function saveNativeFallbackBundle(bundle: BookmarkBundle): Promise<Bookmar
   return saveStoredBundle(storageArea, PRIVATE_BOOKMARKS_NATIVE_FALLBACK_KEY, bundle);
 }
 
+function snapshotSharedBundle(bundle: BookmarkBundle, config: SyncConfig): BookmarkBundle {
+  const generatedAt = new Date().toISOString();
+
+  return {
+    ...bundle,
+    revision: `${generatedAt}#${config.deviceId}#snapshot`,
+    deviceId: config.deviceId,
+    generatedAt
+  };
+}
+
 export async function loadSavedSharedBundleFallback(): Promise<BookmarkBundle | null> {
   const storageArea = requirePrivateBookmarkStorage();
   return loadStoredBundle(storageArea, PRIVATE_BOOKMARKS_NATIVE_FALLBACK_KEY);
@@ -483,6 +494,43 @@ export async function loadSavedSharedBundleFallback(): Promise<BookmarkBundle | 
 export async function clearSavedSharedBundleFallback(): Promise<void> {
   const storageArea = requirePrivateBookmarkStorage();
   await clearStoredBundle(storageArea, PRIVATE_BOOKMARKS_NATIVE_FALLBACK_KEY);
+}
+
+export async function loadSharedBookmarkBundle(
+  config: SyncConfig,
+  options: BookmarkOperationOptions = {}
+): Promise<BookmarkBundle> {
+  if (hasBookmarksApi()) {
+    let savedFallbackBundle: BookmarkBundle | null = null;
+
+    try {
+      savedFallbackBundle = await loadSavedSharedBundleFallback();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+
+      if (message !== BOOKMARKS_API_UNAVAILABLE_MESSAGE) {
+        throw error;
+      }
+
+      savedFallbackBundle = null;
+    }
+
+    if (savedFallbackBundle) {
+      const sharedBundle = snapshotSharedBundle(savedFallbackBundle, config);
+
+      if (options.onProgress) {
+        const total = countBundleDescendants(sharedBundle, Object.values(sharedBundle.roots));
+        await options.onProgress({
+          processed: total,
+          total
+        });
+      }
+
+      return sharedBundle;
+    }
+  }
+
+  return listLocalBookmarks(config, options);
 }
 
 export async function listLocalBookmarks(

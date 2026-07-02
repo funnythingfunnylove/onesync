@@ -68,6 +68,11 @@ export type BookmarkUrlValidationResult =
   | { ok: true; value: string }
   | { ok: false; message: string };
 
+export type PrivateBookmarkEditDraft = {
+  title: string;
+  url?: string;
+};
+
 function findTreeNodeLocation(
   nodes: PrivateBookmarkViewNode[],
   nodeId: string,
@@ -158,6 +163,28 @@ export function validatePrivateBookmarkUrl(rawUrl: string): BookmarkUrlValidatio
   return {
     ok: true,
     value: trimmed
+  };
+}
+
+export function getPrivateBookmarkLinkHref(rawUrl: string | undefined): string | null {
+  if (!rawUrl) {
+    return null;
+  }
+
+  const validatedUrl = validatePrivateBookmarkUrl(rawUrl);
+  return validatedUrl.ok ? validatedUrl.value : null;
+}
+
+export function buildPrivateBookmarkEditDraft(
+  nodeType: PrivateBookmarkViewNode["type"],
+  formData: FormData
+): PrivateBookmarkEditDraft {
+  const title = String(formData.get("title") ?? "");
+  const url = String(formData.get("url") ?? "");
+
+  return {
+    title,
+    ...(nodeType === "bookmark" ? { url } : {})
   };
 }
 

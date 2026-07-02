@@ -128,7 +128,7 @@ const {
   appendActivityLog,
   encodeBundle,
   decodeBundle,
-  listLocalBookmarks,
+  loadSharedBookmarkBundle,
   getBaseSnapshot
 } = vi.hoisted(() => ({
   putLatestBundle: vi.fn(),
@@ -140,13 +140,13 @@ const {
   appendActivityLog: vi.fn(),
   encodeBundle: vi.fn(),
   decodeBundle: vi.fn(),
-  listLocalBookmarks: vi.fn(),
+  loadSharedBookmarkBundle: vi.fn(),
   getBaseSnapshot: vi.fn()
 }));
 
 vi.mock("../../src/core/browser/bookmarks", () => ({
   applyBundleToBookmarks,
-  listLocalBookmarks
+  loadSharedBookmarkBundle
 }));
 
 vi.mock("../../src/core/browser/storage", () => ({
@@ -204,7 +204,7 @@ beforeEach(() => {
     return encodedBundle;
   });
   decodeBundle.mockResolvedValue(localBundle);
-  listLocalBookmarks.mockResolvedValue(localBundle);
+  loadSharedBookmarkBundle.mockResolvedValue(localBundle);
   getBaseSnapshot.mockResolvedValue(null);
   fetchLatestBundle.mockResolvedValue({ bundleEtag: null, metadataEtag: null, bundle: null });
 });
@@ -224,13 +224,13 @@ describe("syncOnce", () => {
       })
     ).rejects.toThrow(/password/i);
 
-    expect(listLocalBookmarks).not.toHaveBeenCalled();
+    expect(loadSharedBookmarkBundle).not.toHaveBeenCalled();
     expect(fetchLatestBundle).not.toHaveBeenCalled();
     expect(putLatestBundle).not.toHaveBeenCalled();
   });
 
   it("uploads the local bundle when no remote bundle exists", async () => {
-    listLocalBookmarks.mockImplementationOnce(async (_config, options) => {
+    loadSharedBookmarkBundle.mockImplementationOnce(async (_config, options) => {
       await options?.onProgress?.({
         processed: 1,
         total: 1
@@ -290,8 +290,51 @@ describe("syncOnce", () => {
     );
   });
 
+  it("uses the shared bundle loader so saved native fallback edits are uploaded", async () => {
+    const fallbackEditedBundle = {
+      ...localBundle,
+      revision: "2026-07-01T02:00:00.000Z#device-1#snapshot",
+      generatedAt: "2026-07-01T02:00:00.000Z",
+      nodes: {
+        ...localBundle.nodes,
+        "bookmark-1": {
+          ...localBundle.nodes["bookmark-1"],
+          title: "Manager Edited Title",
+          updatedAt: "2026-07-01T02:00:00.000Z"
+        }
+      }
+    } satisfies BookmarkBundle;
+
+    loadSharedBookmarkBundle.mockResolvedValueOnce(fallbackEditedBundle);
+
+    const result = await syncOnce({
+      deviceId: "device-1",
+      webdavUrl: "https://dav.example.com",
+      username: "alice",
+      password: "secret",
+      basePath: "/onesync",
+      intervalMinutes: 15,
+      scheduledSyncEnabled: true,
+      allowInsecureHttp: false
+    });
+
+    expect(result.status).toBe("uploaded");
+    expect(encodeBundle).toHaveBeenCalledWith(fallbackEditedBundle, expect.any(Object));
+    expect(setRecoverySnapshot).toHaveBeenCalledWith(fallbackEditedBundle);
+    expect(setBaseSnapshot).toHaveBeenCalledWith(fallbackEditedBundle);
+    expect(putLatestBundle).toHaveBeenCalledWith(
+      encodedBundle,
+      fallbackEditedBundle.revision,
+      fallbackEditedBundle.deviceId,
+      null,
+      expect.objectContaining({
+        onProgress: expect.any(Function)
+      })
+    );
+  });
+
   it("throttles progress state writes during large local scans while keeping the final count accurate", async () => {
-    listLocalBookmarks.mockImplementationOnce(async (_config, options) => {
+    loadSharedBookmarkBundle.mockImplementationOnce(async (_config, options) => {
       for (let processed = 1; processed <= 250; processed += 1) {
         await options?.onProgress?.({
           processed,
@@ -613,7 +656,7 @@ describe("syncOnce", () => {
   it("downloads the remote bundle when Safari starts from an empty private local carrier and no base snapshot exists", async () => {
     const remoteBundle = structuredClone(localBundle);
 
-    listLocalBookmarks.mockResolvedValueOnce(emptyPrivateLocalBundle);
+    loadSharedBookmarkBundle.mockResolvedValueOnce(emptyPrivateLocalBundle);
     fetchLatestBundle.mockResolvedValue({
       bundleEtag: "\"bundle-etag-remote\"",
       metadataEtag: "\"meta-etag-remote\"",

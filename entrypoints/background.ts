@@ -1,5 +1,9 @@
 import { browser } from "wxt/browser";
-import { applyBundleToBookmarks, getBookmarkStorageMode, listLocalBookmarks } from "../src/core/browser/bookmarks";
+import {
+  applyBundleToBookmarks,
+  getBookmarkStorageMode,
+  loadSharedBookmarkBundle
+} from "../src/core/browser/bookmarks";
 import { loadPrivateManagerBundle, savePrivateManagerBundle } from "../src/core/browser/private-bookmarks";
 import { setBaseSnapshot, setRecoverySnapshot } from "../src/core/browser/storage";
 import { appendActivityLog, getActivityLog } from "../src/core/state/activity-log";
@@ -29,6 +33,11 @@ function describePrivateBookmarkMutation(bundle: BookmarkBundle, operation: Priv
       return `Private bookmarks: created folder "${operation.title}".`;
     case "create-bookmark":
       return `Private bookmarks: created bookmark "${operation.title}".`;
+    case "update-bookmark": {
+      const existingNode = bundle.nodes[operation.nodeId];
+      const previousTitle = existingNode?.title ?? "bookmark item";
+      return `Private bookmarks: updated "${previousTitle}" to "${operation.title}".`;
+    }
     case "rename-node": {
       const existingNode = bundle.nodes[operation.nodeId];
       const previousTitle = existingNode?.title ?? "bookmark item";
@@ -142,13 +151,13 @@ export async function handleRuntimeMessage(message: RuntimeMessage): Promise<unk
     }
     case "onesync:export-bundle": {
       const config = await getConfig();
-      const localBundle = await listLocalBookmarks(config);
+      const localBundle = await loadSharedBookmarkBundle(config);
       const encodedBundle = await encodeBundle(localBundle);
       return JSON.stringify(encodedBundle, null, 2);
     }
     case "onesync:import-bundle": {
       const config = await getConfig();
-      const previousBundle = await listLocalBookmarks(config);
+      const previousBundle = await loadSharedBookmarkBundle(config);
       await setRecoverySnapshot(previousBundle);
 
       const decodedBundle = await decodeBundle(JSON.parse(message.payload.encodedBundleJson));

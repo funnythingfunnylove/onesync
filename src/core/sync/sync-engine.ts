@@ -1,4 +1,4 @@
-import { applyBundleToBookmarks, listLocalBookmarks } from "../browser/bookmarks";
+import { applyBundleToBookmarks, loadSharedBookmarkBundle } from "../browser/bookmarks";
 import { getBaseSnapshot, setBaseSnapshot, setRecoverySnapshot } from "../browser/storage";
 import { decodeBundle } from "../format/decode";
 import { encodeBundle } from "../format/encode";
@@ -131,7 +131,7 @@ export async function syncOnce(config: SyncConfig): Promise<{
       processed: 0,
       total: 0
     };
-    const localBundle = await listLocalBookmarks(validatedConfig, {
+    const localBundle = await loadSharedBookmarkBundle(validatedConfig, {
       onProgress: async (progress) => {
         localBookmarkProgress = progress;
         await writeProgress({

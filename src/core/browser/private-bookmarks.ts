@@ -4,32 +4,13 @@ import {
   applySharedBundleLocally,
   clearSavedSharedBundleFallback,
   getBookmarkStorageMode,
-  loadSavedSharedBundleFallback,
+  loadSharedBookmarkBundle,
   type BookmarkStorageMode,
   listLocalBookmarks
 } from "./bookmarks";
 
-function snapshotBundleForManager(bundle: BookmarkBundle, config: SyncConfig): BookmarkBundle {
-  const generatedAt = new Date().toISOString();
-
-  return {
-    ...bundle,
-    revision: `${generatedAt}#${config.deviceId}#snapshot`,
-    deviceId: config.deviceId,
-    generatedAt
-  };
-}
-
 export async function loadPrivateManagerBundle(config: SyncConfig): Promise<BookmarkBundle> {
-  if (getBookmarkStorageMode() === "native") {
-    const savedFallbackBundle = await loadSavedSharedBundleFallback();
-
-    if (savedFallbackBundle) {
-      return snapshotBundleForManager(savedFallbackBundle, config);
-    }
-  }
-
-  return listLocalBookmarks(config);
+  return loadSharedBookmarkBundle(config);
 }
 
 export async function savePrivateManagerBundle(

@@ -16,6 +16,8 @@ vi.mock("wxt/browser", () => ({
 
 import {
   buildPrivateBookmarkManagerViewModel,
+  buildPrivateBookmarkEditDraft,
+  getPrivateBookmarkLinkHref,
   loadPrivateBookmarksViewState,
   mutatePrivateBookmarks,
   requestOptionsConnectionCheck,
@@ -484,6 +486,28 @@ describe("options view-model", () => {
     expect(validatePrivateBookmarkUrl("not a url")).toEqual({
       ok: false,
       message: "Bookmark URL must be a complete URL."
+    });
+  });
+
+  it("uses the same URL scheme policy for direct bookmark links as create and edit validation", () => {
+    expect(getPrivateBookmarkLinkHref("https://example.com/docs")).toBe("https://example.com/docs");
+    expect(getPrivateBookmarkLinkHref("http://example.com/docs")).toBe("http://example.com/docs");
+    expect(getPrivateBookmarkLinkHref("javascript:alert(1)")).toBeNull();
+    expect(getPrivateBookmarkLinkHref("data:text/html,hello")).toBeNull();
+    expect(getPrivateBookmarkLinkHref("not a url")).toBeNull();
+  });
+
+  it("builds inline edit drafts from active form values before refresh rerenders", () => {
+    const formData = new FormData();
+    formData.set("title", "Unsaved title");
+    formData.set("url", "https://draft.example.com/");
+
+    expect(buildPrivateBookmarkEditDraft("bookmark", formData)).toEqual({
+      title: "Unsaved title",
+      url: "https://draft.example.com/"
+    });
+    expect(buildPrivateBookmarkEditDraft("folder", formData)).toEqual({
+      title: "Unsaved title"
     });
   });
 });

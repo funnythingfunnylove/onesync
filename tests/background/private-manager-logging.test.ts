@@ -10,14 +10,24 @@ const {
   savePrivateManagerBundleMock,
   applyPrivateBookmarkOperationMock,
   buildPrivateBookmarksViewStateMock,
-  appendActivityLogMock
+  appendActivityLogMock,
+  loadSharedBookmarkBundleMock,
+  encodeBundleMock,
+  decodeBundleMock,
+  applyBundleToBookmarksMock,
+  setRecoverySnapshotMock
 } = vi.hoisted(() => ({
   getConfigMock: vi.fn(),
   loadPrivateManagerBundleMock: vi.fn(),
   savePrivateManagerBundleMock: vi.fn(),
   applyPrivateBookmarkOperationMock: vi.fn(),
   buildPrivateBookmarksViewStateMock: vi.fn(),
-  appendActivityLogMock: vi.fn()
+  appendActivityLogMock: vi.fn(),
+  loadSharedBookmarkBundleMock: vi.fn(),
+  encodeBundleMock: vi.fn(),
+  decodeBundleMock: vi.fn(),
+  applyBundleToBookmarksMock: vi.fn(),
+  setRecoverySnapshotMock: vi.fn()
 }));
 
 vi.mock("wxt/browser", () => ({
@@ -34,9 +44,9 @@ vi.mock("wxt/browser", () => ({
 }));
 
 vi.mock("../../src/core/browser/bookmarks", () => ({
-  applyBundleToBookmarks: vi.fn(),
+  applyBundleToBookmarks: applyBundleToBookmarksMock,
   getBookmarkStorageMode: vi.fn(() => "private"),
-  listLocalBookmarks: vi.fn()
+  loadSharedBookmarkBundle: loadSharedBookmarkBundleMock
 }));
 
 vi.mock("../../src/core/browser/private-bookmarks", () => ({
@@ -46,7 +56,7 @@ vi.mock("../../src/core/browser/private-bookmarks", () => ({
 
 vi.mock("../../src/core/browser/storage", () => ({
   setBaseSnapshot: vi.fn(),
-  setRecoverySnapshot: vi.fn()
+  setRecoverySnapshot: setRecoverySnapshotMock
 }));
 
 vi.mock("../../src/core/state/activity-log", () => ({
@@ -78,11 +88,11 @@ vi.mock("../../src/core/state/sync-state", () => ({
 }));
 
 vi.mock("../../src/core/format/decode", () => ({
-  decodeBundle: vi.fn()
+  decodeBundle: decodeBundleMock
 }));
 
 vi.mock("../../src/core/format/encode", () => ({
-  encodeBundle: vi.fn()
+  encodeBundle: encodeBundleMock
 }));
 
 vi.mock("../../src/core/sync/scheduler", () => ({
@@ -195,6 +205,9 @@ beforeEach(() => {
   getConfigMock.mockResolvedValue(sampleConfig);
   loadPrivateManagerBundleMock.mockResolvedValue(currentBundle);
   savePrivateManagerBundleMock.mockResolvedValue(currentBundle);
+  loadSharedBookmarkBundleMock.mockResolvedValue(currentBundle);
+  encodeBundleMock.mockResolvedValue({ kind: "onesync.bundle", payload: "encoded" });
+  decodeBundleMock.mockResolvedValue(currentBundle);
   buildPrivateBookmarksViewStateMock.mockReturnValue({
     mode: "private",
     selectedFolderId: "root-toolbar",
@@ -207,6 +220,46 @@ beforeEach(() => {
 });
 
 describe("background private bookmark activity logging", () => {
+  it("records an info activity entry after a bookmark edit", async () => {
+    vi.stubGlobal("defineBackground", (factory: () => unknown) => factory);
+
+    const nextBundle: BookmarkBundle = {
+      ...currentBundle,
+      nodes: {
+        ...currentBundle.nodes,
+        "bookmark-1": {
+          ...currentBundle.nodes["bookmark-1"],
+          type: "bookmark",
+          title: "Docs hub",
+          url: "https://example.com/hub"
+        }
+      }
+    };
+
+    applyPrivateBookmarkOperationMock.mockReturnValue(nextBundle);
+    savePrivateManagerBundleMock.mockResolvedValue(nextBundle);
+    const { handleRuntimeMessage } = await import("../../entrypoints/background");
+
+    await handleRuntimeMessage({
+      type: "onesync:mutate-private-bookmarks",
+      payload: {
+        operation: {
+          type: "update-bookmark",
+          nodeId: "bookmark-1",
+          title: "Docs hub",
+          url: "https://example.com/hub"
+        }
+      }
+    } satisfies RuntimeMessage);
+
+    expect(appendActivityLogMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        level: "info",
+        message: 'Private bookmarks: updated "Docs" to "Docs hub".'
+      })
+    );
+  });
+
   it("records an info activity entry after a successful move", async () => {
     vi.stubGlobal("defineBackground", (factory: () => unknown) => factory);
 
@@ -251,5 +304,33 @@ describe("background private bookmark activity logging", () => {
         message: 'Private bookmarks: moved "Docs" to "Bookmarks Menu".'
       })
     );
+  });
+
+  it("exports through the shared bundle loader so native fallback edits are included", async () => {
+    vi.stubGlobal("defineBackground", (factory: () => unknown) => factory);
+    const { handleRuntimeMessage } = await import("../../entrypoints/background");
+
+    await handleRuntimeMessage({
+      type: "onesync:export-bundle"
+    } satisfies RuntimeMessage);
+
+    expect(loadSharedBookmarkBundleMock).toHaveBeenCalledWith(sampleConfig);
+    expect(encodeBundleMock).toHaveBeenCalledWith(currentBundle);
+  });
+
+  it("stores import recovery snapshots from the shared bundle loader", async () => {
+    vi.stubGlobal("defineBackground", (factory: () => unknown) => factory);
+    const { handleRuntimeMessage } = await import("../../entrypoints/background");
+
+    await handleRuntimeMessage({
+      type: "onesync:import-bundle",
+      payload: {
+        encodedBundleJson: JSON.stringify({ kind: "onesync.bundle", payload: "encoded" })
+      }
+    } satisfies RuntimeMessage);
+
+    expect(loadSharedBookmarkBundleMock).toHaveBeenCalledWith(sampleConfig);
+    expect(setRecoverySnapshotMock).toHaveBeenCalledWith(currentBundle);
+    expect(applyBundleToBookmarksMock).toHaveBeenCalledWith(currentBundle);
   });
 });
