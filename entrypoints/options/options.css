@@ -604,8 +604,9 @@ a {
 
 .private-folder-button.is-selected,
 .private-node-button.is-selected {
-  background: transparent;
-  box-shadow: none;
+  border-color: rgba(31, 108, 159, 0.28);
+  background: linear-gradient(90deg, rgba(31, 108, 159, 0.08), rgba(31, 108, 159, 0.02));
+  box-shadow: inset 3px 0 0 var(--blue-text);
 }
 
 .private-folder-row {
@@ -622,12 +623,22 @@ a {
   background: #d4cec3;
 }
 
+.private-folder-button.is-selected .private-folder-glyph,
+.private-node-button.is-selected .private-folder-glyph {
+  background: var(--blue-text);
+}
+
 .private-folder-title {
   font-size: 12px;
   line-height: 1.25;
   letter-spacing: 0;
   text-transform: none;
   color: var(--text);
+}
+
+.private-folder-button.is-selected .private-folder-title,
+.private-node-button.is-selected .private-folder-title {
+  font-weight: 600;
 }
 
 .private-node-header {
@@ -1085,6 +1096,7 @@ a {
   }
 
   .bookmark-workspace {
+    grid-template-columns: 1fr;
     min-height: auto;
   }
 
