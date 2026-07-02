@@ -1,56 +1,45 @@
-# Task 1 Report: Editorial options workspace
+# Task 1 Report
 
 ## Status
-DONE_WITH_CONCERNS
+
+DONE
 
 ## Scope
-- Updated `/Users/fl/proj/onesync/entrypoints/options/main.ts`
-- Updated `/Users/fl/proj/onesync/entrypoints/options/options.css`
-- Preserved existing options-page behavior and event wiring
 
-## What changed
-- Reframed the options page around the approved editorial workspace structure with a quieter left rail, an overview chapter, a dominant bookmark-manager chapter, a dedicated connection chapter, a separate bundle chapter, and an activity chapter.
-- Updated the workspace navigation labels to `Overview`, `Bookmark manager`, `Remote sync`, `Bundle`, and `Activity`.
-- Kept the bookmark manager's `Directory / List or Tree / Details` structure while making the center column the primary reading surface and toning down the side rails.
-- Shortened chapter copy to compact notes and metadata instead of longer product-explainer copy.
-- Renamed visible chapter headings per the brief: `Connection`, `Bundle`, and `Activity`.
-- Reworked the CSS to the required warm monochrome system:
-  - canvas `#FBFBFA`
-  - surface `#FFFFFF`
-  - border `#EAEAEA`
-  - text `#2F3437`
-  - muted text `#787774`
-- Removed gradients and heavy visual treatment, tightened radii and row density, and preserved visible focus states and disabled-state clarity.
-- Limited state colors to semantic feedback surfaces for info/progress/error emphasis.
+- `/Users/fl/proj/onesync/src/ui/view-models/options.ts`
+- `/Users/fl/proj/onesync/src/core/shared/types.ts`
+- `/Users/fl/proj/onesync/tests/ui/options-view-model.test.ts`
+
+## What Changed
+
+1. Collapsed the private bookmark manager view model from tabbed `folders/tree` behavior to a single folder-scoped mode.
+2. Removed `PrivateBookmarkTab`, `tabs`, `activeTab`, `isCollapsible`, and `isExpanded` from the view-model surface.
+3. Added `childCount` to `PrivateBookmarkManagerNode`.
+4. Updated the folder-selection logic so a selected bookmark resolves its parent folder as the visible folder context.
+5. Reworked the focused tests to assert the new single-mode contract and removed tree-tab-specific cases.
+
+## TDD Notes
+
+1. Updated `tests/ui/options-view-model.test.ts` first.
+2. Verified the focused test run failed before production changes:
+   - `pnpm test -- --run tests/ui/options-view-model.test.ts`
+3. Implemented the view-model and shared-type changes.
+4. Re-ran the focused test file and then the full suite.
 
 ## Verification
-- `pnpm exec tsc --noEmit` passed after the markup update.
-- `pnpm exec tsc --noEmit` passed again after the CSS rewrite.
-- `pnpm dev` started successfully and built the extension dev output.
 
-## Browser QA attempt
-- Attempted in-app browser validation against `http://localhost:3000/options.html`.
-- The page load was blocked with `net::ERR_BLOCKED_BY_CLIENT`.
-- A follow-up attempt to inspect the built `file://` options page was blocked by browser-use URL policy, so I stopped there rather than work around it.
+- Focused: `pnpm test -- --run tests/ui/options-view-model.test.ts`
+- Full suite: `pnpm test`
 
-## Commit
-- `bde04cc feat: redesign options workspace`
+Both commands passed after the implementation.
+
+## Self-Review
+
+- Kept the change scoped to the task-owned files and the requested report file.
+- Removed the now-dead tree flattening and expansion-state mapping from the view model.
+- Preserved the existing move-destination and root-protection behavior in the new single-folder mode.
+- Staged only the `PrivateBookmarkTab` removal in `src/core/shared/types.ts`, leaving an unrelated pre-existing `update-bookmark` edit out of this task commit.
 
 ## Concerns
-- Rendered browser QA could not be completed because the options page was blocked in the available browser-validation path, so visual verification is limited to code inspection plus TypeScript compilation.
 
-## Follow-up fix
-- Restored the always-visible status line in the left rail so the rail keeps title, status, progress, section links, version, and device ID even when no progress label is active.
-- Reworked activity-log level styling to be semantic by level instead of applying blue styling unconditionally, with distinct treatment for info, warning, error, and success states.
-- Added visible focus styling for checkbox rows and checkbox inputs so keyboard focus stays clear in the redesigned controls.
-
-## Follow-up verification
-- `pnpm exec tsc --noEmit` passed after the follow-up fix.
-
-## Final fix pass
-- Strengthened keyboard focus treatment on the options page so focus states read clearly on the warm white surfaces, including a darker blue outline and clearer background/border contrast on focusable controls.
-- Removed the redundant `selectionDescription` ternary in `entrypoints/options/main.ts`.
-- Removed `html { scroll-behavior: smooth; }` from `entrypoints/options/options.css` so the page no longer forces smooth scrolling without reduced-motion handling.
-
-## Final verification
-- `pnpm exec tsc --noEmit` passed after the final fixes.
+None.

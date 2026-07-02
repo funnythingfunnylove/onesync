@@ -157,16 +157,13 @@ describe("options view-model", () => {
     });
   });
 
-  it("builds tabbed private bookmark manager data for the selected folder pane", () => {
+  it("builds folder-scoped bookmark manager data without view tabs", () => {
     const viewModel = buildPrivateBookmarkManagerViewModel(samplePrivateState, {
-      activeTab: "folders",
       selectedNodeId: "bookmark-1"
     });
 
-    expect(viewModel.tabs).toEqual([
-      { id: "folders", label: "Folders", isActive: true },
-      { id: "tree", label: "Tree", isActive: false }
-    ]);
+    expect("tabs" in viewModel).toBe(false);
+    expect("activeTab" in viewModel).toBe(false);
     expect(viewModel.selectedFolder).toMatchObject({
       id: "root-toolbar",
       title: "Bookmarks Bar"
@@ -179,8 +176,8 @@ describe("options view-model", () => {
     );
     expect(viewModel.visibleNodes).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ id: "folder-a", type: "folder" }),
-        expect.objectContaining({ id: "bookmark-1", type: "bookmark", isSelected: true })
+        expect.objectContaining({ id: "folder-a", type: "folder", childCount: 1 }),
+        expect.objectContaining({ id: "bookmark-1", type: "bookmark", isSelected: true, childCount: 0 })
       ])
     );
     expect(viewModel.actions.rename.disabled).toBe(false);
@@ -196,7 +193,6 @@ describe("options view-model", () => {
 
   it("uses a selected folder node as the folder and action context even when the previous folder differs", () => {
     const viewModel = buildPrivateBookmarkManagerViewModel(samplePrivateState, {
-      activeTab: "folders",
       selectedFolderId: "root-toolbar",
       selectedNodeId: "folder-a"
     });
@@ -207,7 +203,8 @@ describe("options view-model", () => {
     });
     expect(viewModel.selectedNode).toMatchObject({
       id: "folder-a",
-      type: "folder"
+      type: "folder",
+      childCount: 1
     });
     expect(viewModel.folderEntries).toEqual(
       expect.arrayContaining([expect.objectContaining({ id: "folder-a", isSelected: true })])
@@ -226,7 +223,6 @@ describe("options view-model", () => {
 
   it("uses the selected bookmark parent folder as the action context instead of a stale folder selection", () => {
     const viewModel = buildPrivateBookmarkManagerViewModel(samplePrivateState, {
-      activeTab: "folders",
       selectedFolderId: "root-toolbar",
       selectedNodeId: "bookmark-2"
     });
@@ -238,7 +234,8 @@ describe("options view-model", () => {
     expect(viewModel.selectedNode).toMatchObject({
       id: "bookmark-2",
       type: "bookmark",
-      isSelected: true
+      isSelected: true,
+      childCount: 0
     });
     expect(viewModel.folderEntries).toEqual(
       expect.arrayContaining([
@@ -304,7 +301,6 @@ describe("options view-model", () => {
         ]
       },
       {
-        activeTab: "tree",
         selectedNodeId: "folder-a"
       }
     );
@@ -313,27 +309,7 @@ describe("options view-model", () => {
     expect(viewModel.actions.move.disabled).toBe(false);
   });
 
-  it("supports collapsing tree folders with UI-local expansion state", () => {
-    const viewModel = buildPrivateBookmarkManagerViewModel(samplePrivateState, {
-      activeTab: "tree",
-      selectedNodeId: "root-toolbar",
-      collapsedFolderIds: new Set(["folder-a"])
-    });
-
-    expect(viewModel.visibleNodes.map((node) => node.id)).toEqual([
-      "root-toolbar",
-      "folder-a",
-      "folder-b",
-      "bookmark-1"
-    ]);
-    expect(viewModel.visibleNodes.find((node) => node.id === "folder-a")).toMatchObject({
-      id: "folder-a",
-      isCollapsible: true,
-      isExpanded: false
-    });
-  });
-
-  it("protects root folders and preserves the tree tab selection for unavailable runtimes", () => {
+  it("protects root folders for unavailable runtimes in folder-scoped mode", () => {
     const viewModel = buildPrivateBookmarkManagerViewModel(
       {
         ...samplePrivateState,
@@ -341,21 +317,21 @@ describe("options view-model", () => {
         modeHint: "Bookmark access is unavailable in this browser runtime."
       },
       {
-        activeTab: "tree",
         selectedNodeId: "root-toolbar"
       }
     );
 
-    expect(viewModel.tabs).toEqual([
-      { id: "folders", label: "Folders", isActive: false },
-      { id: "tree", label: "Tree", isActive: true }
-    ]);
-    expect(viewModel.visibleNodes[0]).toMatchObject({
+    expect("tabs" in viewModel).toBe(false);
+    expect(viewModel.selectedFolder).toMatchObject({
       id: "root-toolbar",
-      type: "folder",
-      depth: 0,
-      isSelected: true
+      title: "Bookmarks Bar"
     });
+    expect(viewModel.visibleNodes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "folder-a", type: "folder", childCount: 1 }),
+        expect.objectContaining({ id: "bookmark-1", type: "bookmark", childCount: 0 })
+      ])
+    );
     expect(viewModel.actions.createFolder.disabled).toBe(true);
     expect(viewModel.actions.createBookmark.disabled).toBe(true);
     expect(viewModel.actions.rename.disabled).toBe(true);
@@ -371,7 +347,6 @@ describe("options view-model", () => {
         modeHint: "Changes here update shared data and are applied back to browser bookmarks."
       },
       {
-        activeTab: "folders",
         selectedNodeId: "bookmark-1"
       }
     );

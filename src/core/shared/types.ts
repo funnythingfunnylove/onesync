@@ -4,7 +4,6 @@ export type BrowserTarget = "chrome" | "firefox" | "safari";
 
 export type SyncIntervalMinutes = 1 | 5 | 15 | 30 | 60;
 
-export type PrivateBookmarkTab = "folders" | "tree";
 
 export type PrivateBookmarkOperation =
   | { type: "create-folder"; parentId: string; title: string }
