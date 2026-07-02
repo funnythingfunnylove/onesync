@@ -3,7 +3,7 @@ import { getBookmarkStorageMode } from "../../src/core/browser/bookmarks";
 import type { PrivateBookmarkViewNode } from "../../src/core/private-bookmarks/view-state";
 import type { SyncConfig } from "../../src/core/state/config";
 import type { SyncState } from "../../src/core/state/sync-state";
-import type { PrivateBookmarkOperation, PrivateBookmarkTab } from "../../src/core/shared/types";
+import type { PrivateBookmarkOperation } from "../../src/core/shared/types";
 import { getBookmarkSourceLabel } from "../../src/ui/bookmark-source";
 import {
   buildPrivateBookmarkManagerViewModel,
@@ -26,12 +26,14 @@ import {
 
 const root = document.querySelector<HTMLDivElement>("#app");
 const extensionVersion = browser.runtime.getManifest().version;
+type OptionsWorkspacePage = "workspace" | "bookmarks" | "activity";
 let pageMessage: { type: "error" | "info"; text: string } | null = null;
 let refreshHandle: number | null = null;
-let privateTab: PrivateBookmarkTab = "folders";
+let activeWorkspacePage: OptionsWorkspacePage = "workspace";
 let selectedPrivateFolderId: string | null = null;
 let selectedPrivateNodeId: string | null = null;
-const collapsedPrivateFolderIds = new Set<string>();
+let privateSearchQuery = "";
+let editingPrivateNodeId: string | null = null;
 
 function escapeHtml(value: string): string {
   return value
@@ -67,6 +69,33 @@ function renderActivityLog(items: Array<{ createdAt: string; level: string; mess
         )
         .join("")}
     </ul>
+  `;
+}
+
+function renderWorkspaceTabs(activePage: OptionsWorkspacePage): string {
+  const tabs: Array<{ id: OptionsWorkspacePage; label: string }> = [
+    { id: "workspace", label: "Workspace" },
+    { id: "bookmarks", label: "Bookmark manager" },
+    { id: "activity", label: "Activity" }
+  ];
+
+  return `
+    <nav class="workspace-links" aria-label="Settings pages">
+      ${tabs
+        .map(
+          (tab) => `
+            <button
+              type="button"
+              class="workspace-link ${tab.id === activePage ? "is-active" : ""}"
+              data-workspace-page="${tab.id}"
+              aria-current="${tab.id === activePage ? "page" : "false"}"
+            >
+              ${escapeHtml(tab.label)}
+            </button>
+          `
+        )
+        .join("")}
+    </nav>
   `;
 }
 
@@ -108,54 +137,108 @@ function renderPrivateVisibleNodes(
     url?: string;
     depth: number;
     isSelected: boolean;
-    isCollapsible: boolean;
-    isExpanded: boolean;
+    childCount: number;
   }>,
-  activeTab: PrivateBookmarkTab
+  editingNodeId: string | null,
+  searchQuery: string
 ): string {
   if (nodes.length === 0) {
-    return `<p class="empty-state">Nothing is in this folder yet.</p>`;
+    return `<p class="empty-state">${searchQuery.trim() ? "No items match your search." : "Nothing is in this folder yet."}</p>`;
   }
-
-  const treeMode = activeTab === "tree";
 
   return `
     <div class="private-node-list" role="list">
       ${nodes
         .map(
           (node) => `
-            <div
-              class="private-node-row ${treeMode ? "is-tree-row" : ""}"
-              style="--private-depth:${node.depth};"
-            >
-              ${
-                treeMode
-                  ? node.isCollapsible
+            <div class="private-node-row private-node-row-${node.type}">
+              <div class="private-node-card ${node.isSelected ? "is-selected" : ""}">
+                ${
+                  editingNodeId === node.id
                     ? `
-                      <button
-                        type="button"
-                        class="private-disclosure-button"
-                        data-private-toggle-folder-id="${escapeHtml(node.id)}"
-                        aria-label="${node.isExpanded ? "Collapse" : "Expand"} ${escapeHtml(node.title)}"
-                        aria-expanded="${node.isExpanded ? "true" : "false"}"
-                      >
-                        ${node.isExpanded ? "▾" : "▸"}
-                      </button>
+                      <form class="private-node-editor-form" data-private-edit-form-id="${escapeHtml(node.id)}">
+                        <div class="private-node-editor-fields">
+                          <input
+                            class="private-node-inline-input"
+                            name="title"
+                            value="${escapeHtml(node.title)}"
+                            required
+                            placeholder="${node.type === "folder" ? "Folder title" : "Bookmark title"}"
+                          />
+                          ${
+                            node.type === "bookmark"
+                              ? `
+                                <input
+                                  class="private-node-inline-input private-node-inline-url"
+                                  name="url"
+                                  type="url"
+                                  required
+                                  value="${escapeHtml(node.url ?? "")}"
+                                  placeholder="https://example.com/"
+                                />
+                              `
+                              : ""
+                          }
+                        </div>
+                        <div class="private-node-row-actions">
+                          <button type="submit" class="secondary-button compact-button">Save</button>
+                          <button type="button" class="secondary-button compact-button" data-private-cancel-edit="true">Cancel</button>
+                          <button
+                            type="button"
+                            class="secondary-button danger-button compact-button"
+                            data-private-delete-node-id="${escapeHtml(node.id)}"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </form>
                     `
-                    : `<span class="private-disclosure-spacer" aria-hidden="true"></span>`
-                  : ""
-              }
-              <button
-                type="button"
-                class="private-node-button ${node.isSelected ? "is-selected" : ""}"
-                data-private-node-id="${escapeHtml(node.id)}"
-              >
-                <span class="private-node-header">
-                  <span class="private-node-type">${node.type === "folder" ? "Folder" : "Bookmark"}</span>
-                  <strong class="private-node-title">${escapeHtml(node.title)}</strong>
-                </span>
-                ${node.url ? `<span class="private-node-meta">${escapeHtml(node.url)}</span>` : ""}
-              </button>
+                    : `
+                      <div class="private-node-surface">
+                        <button
+                          type="button"
+                          class="private-node-button ${node.isSelected ? "is-selected" : ""}"
+                          data-private-node-id="${escapeHtml(node.id)}"
+                        >
+                          <span class="private-node-header">
+                            <strong class="private-node-title">${escapeHtml(node.title)}</strong>
+                            <span class="private-node-meta">
+                              ${
+                                node.type === "folder"
+                                  ? `${node.childCount} item${node.childCount === 1 ? "" : "s"}`
+                                  : escapeHtml(node.url ?? "")
+                              }
+                            </span>
+                          </span>
+                        </button>
+                        ${
+                          node.type === "bookmark" && node.url
+                            ? `
+                              <a
+                                class="private-node-link"
+                                href="${escapeHtml(node.url)}"
+                                target="_blank"
+                                rel="noreferrer noopener"
+                                title="${escapeHtml(node.url)}"
+                              >
+                                ${escapeHtml(node.url)}
+                              </a>
+                            `
+                            : ""
+                        }
+                        <div class="private-node-row-actions">
+                          <button
+                            type="button"
+                            class="secondary-button compact-button"
+                            data-private-edit-node-id="${escapeHtml(node.id)}"
+                          >
+                            Edit
+                          </button>
+                        </div>
+                      </div>
+                    `
+                }
+              </div>
             </div>
           `
         )
@@ -164,31 +247,42 @@ function renderPrivateVisibleNodes(
   `;
 }
 
-function treeContainsNode(
+function findPrivateNodeById(
   nodes: PrivateBookmarkViewNode[],
   nodeId: string
-): boolean {
-  return nodes.some((node) => {
+): PrivateBookmarkViewNode | null {
+  for (const node of nodes) {
     if (node.id === nodeId) {
-      return true;
+      return node;
     }
 
-    return treeContainsNode(node.children, nodeId);
-  });
-}
+    const childMatch = findPrivateNodeById(node.children, nodeId);
 
-function folderContainsSelectedNode(
-  nodes: PrivateBookmarkViewNode[],
-  folderId: string,
-  nodeId: string
-): boolean {
-  const folder = nodes.find((node) => node.id === folderId);
-
-  if (folder) {
-    return treeContainsNode(folder.children, nodeId);
+    if (childMatch) {
+      return childMatch;
+    }
   }
 
-  return nodes.some((node) => folderContainsSelectedNode(node.children, folderId, nodeId));
+  return null;
+}
+
+function filterPrivateVisibleNodes<T extends { title: string; url?: string }>(
+  nodes: T[],
+  query: string
+): T[] {
+  const normalizedQuery = query.trim().toLowerCase();
+
+  if (!normalizedQuery) {
+    return nodes;
+  }
+
+  return nodes.filter((node) => {
+    const haystack = [node.title, node.url ?? ""]
+      .join(" ")
+      .toLowerCase();
+
+    return haystack.includes(normalizedQuery);
+  });
 }
 
 function readConfigFromForm(form: HTMLFormElement, previousConfig: SyncConfig): SyncConfig {
@@ -265,6 +359,13 @@ async function applyPrivateBookmarkOperation(
       selectedPrivateFolderId = operation.destinationFolderId;
     }
 
+    if (
+      (operation.type === "delete-node" || operation.type === "update-bookmark" || operation.type === "rename-node")
+      && editingPrivateNodeId === ("nodeId" in operation ? operation.nodeId : null)
+    ) {
+      editingPrivateNodeId = null;
+    }
+
     pageMessage = { type: "info", text: successMessage };
     await renderOptionsPage(nextState);
   } catch (error) {
@@ -276,7 +377,14 @@ async function applyPrivateBookmarkOperation(
   }
 }
 
-async function renderOptionsPage(privateBookmarksStateOverride?: Awaited<ReturnType<typeof loadPrivateBookmarksViewState>>) {
+async function renderOptionsPage(
+  privateBookmarksStateOverride?: Awaited<ReturnType<typeof loadPrivateBookmarksViewState>>,
+  options?: {
+    focusSearch?: boolean;
+    searchSelectionStart?: number | null;
+    searchSelectionEnd?: number | null;
+  }
+) {
   if (!root) {
     return;
   }
@@ -295,14 +403,25 @@ async function renderOptionsPage(privateBookmarksStateOverride?: Awaited<ReturnT
   const bookmarkSourceLabel = getBookmarkSourceLabel(bookmarkStorageMode);
   const syncOverview = getSyncOverview(optionsViewModel.syncState);
   const privateBookmarkManager = buildPrivateBookmarkManagerViewModel(privateBookmarksState, {
-    activeTab: privateTab,
     selectedFolderId: selectedPrivateFolderId ?? undefined,
-    selectedNodeId: selectedPrivateNodeId ?? undefined,
-    collapsedFolderIds: collapsedPrivateFolderIds
+    selectedNodeId: selectedPrivateNodeId ?? undefined
   });
 
   selectedPrivateFolderId = privateBookmarkManager.selectedFolder?.id ?? null;
   selectedPrivateNodeId = privateBookmarkManager.selectedNode?.id ?? selectedPrivateFolderId;
+  const visibleNodeIds = new Set(privateBookmarkManager.visibleNodes.map((node) => node.id));
+
+  if (editingPrivateNodeId && !visibleNodeIds.has(editingPrivateNodeId)) {
+    editingPrivateNodeId = null;
+  }
+
+  const filteredVisibleNodes = filterPrivateVisibleNodes(privateBookmarkManager.visibleNodes, privateSearchQuery);
+  const contentHeading = "Current folder";
+  const activeFolderLabel = privateBookmarkManager.selectedFolder?.title ?? "Library";
+  const searchMatchLabel = privateSearchQuery.trim()
+    ? `${filteredVisibleNodes.length} match${filteredVisibleNodes.length === 1 ? "" : "es"}`
+    : `${privateBookmarkManager.visibleNodes.length} items`;
+  const contentDescription = `${activeFolderLabel} • ${searchMatchLabel}`;
 
   const lastSuccessLabel = optionsViewModel.syncState.lastSuccessfulSyncAt
     ? new Date(optionsViewModel.syncState.lastSuccessfulSyncAt).toLocaleString()
@@ -310,30 +429,7 @@ async function renderOptionsPage(privateBookmarksStateOverride?: Awaited<ReturnT
   const scheduleLabel = optionsViewModel.config.scheduledSyncEnabled
     ? `Every ${optionsViewModel.config.intervalMinutes} minute${optionsViewModel.config.intervalMinutes === 1 ? "" : "s"}`
     : "Manual only";
-  const selectionLabel = privateBookmarkManager.selectedNode?.title
-    ?? privateBookmarkManager.selectedFolder?.title
-    ?? "Nothing selected";
-  const selectionMeta = privateBookmarkManager.selectedNode
-    ? privateBookmarkManager.selectedNode.type === "folder"
-      ? "Folder selected"
-      : "Bookmark selected"
-    : privateBookmarkManager.selectedFolder
-      ? "Folder selected"
-      : "Choose an item";
-  const selectedNodeTypeLabel = privateBookmarkManager.selectedNode
-    ? privateBookmarkManager.selectedNode.type === "folder"
-      ? "Folder"
-      : "Bookmark"
-    : "Selection";
-  const selectedNodeUrl = privateBookmarkManager.selectedNode?.url ?? null;
-  const contentHeading = privateBookmarkManager.activeTab === "folders" ? "Folder contents" : "Bookmark tree";
-  const contentDescription = privateBookmarkManager.activeTab === "folders"
-    ? (privateBookmarkManager.selectedFolder?.title ?? "Select a folder")
-    : "Full hierarchy";
-  const activeFolderLabel = privateBookmarkManager.selectedFolder?.title ?? "Library";
   const folderCount = privateBookmarkManager.folderEntries.length;
-  const treeViewLabel = privateBookmarkManager.activeTab === "folders" ? "Focused view" : "Hierarchy view";
-  const selectionDescription = "Shared private dataset";
   const bookmarkModeMeta = privateBookmarkManager.mode === "native"
     ? "Native carrier"
     : privateBookmarkManager.mode === "private"
@@ -346,6 +442,209 @@ async function renderOptionsPage(privateBookmarksStateOverride?: Awaited<ReturnT
   const remoteHeadingCopy = "Shared endpoint";
   const bundleHeadingCopy = "Manual snapshot tools";
   const activityHeadingCopy = "Recent events";
+  const workspacePageContent = `
+    <section class="content-section overview-panel" id="overview">
+      <div class="section-intro">
+        <h2>Overview</h2>
+        <p class="section-copy">${overviewHeadingCopy}</p>
+      </div>
+      <div class="summary-strip">
+        <article class="summary-item">
+          <span>Bookmark source</span>
+          <strong>${escapeHtml(bookmarkSourceLabel)}</strong>
+          <p>${escapeHtml(bookmarkModeMeta)}</p>
+        </article>
+        <article class="summary-item">
+          <span>Last successful sync</span>
+          <strong>${escapeHtml(lastSuccessLabel)}</strong>
+          <p>${escapeHtml(revisionMeta)}</p>
+        </article>
+        <article class="summary-item">
+          <span>Sync cadence</span>
+          <strong>${escapeHtml(scheduleLabel)}</strong>
+          <p>${escapeHtml(cadenceMeta)}</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="content-section settings-section" id="remote-sync">
+      <div class="section-intro">
+        <h2>Connection</h2>
+        <p class="section-copy">${remoteHeadingCopy}</p>
+      </div>
+      <section class="settings-chapter">
+        <form id="settings-form" class="form-grid">
+          <div class="chapter-grid">
+            <div class="field-cluster">
+              <div class="cluster-heading">
+                <h3>Endpoint</h3>
+                <p class="section-copy">Remote path and credentials.</p>
+              </div>
+          <label class="field-group">
+            <span>WebDAV URL</span>
+            <input name="webdavUrl" value="${escapeHtml(optionsViewModel.config.webdavUrl)}" placeholder="https://dav.example.com/" />
+          </label>
+          <label class="field-group">
+            <span>Username</span>
+            <input name="username" value="${escapeHtml(optionsViewModel.config.username)}" />
+          </label>
+          <label class="field-group">
+            <span>Password</span>
+            <input name="password" type="password" value="${escapeHtml(optionsViewModel.config.password)}" />
+          </label>
+          <label class="field-group">
+            <span>Base path</span>
+            <input name="basePath" value="${escapeHtml(optionsViewModel.config.basePath)}" />
+          </label>
+            </div>
+            <div class="field-cluster">
+              <div class="cluster-heading">
+                <h3>Schedule</h3>
+                <p class="section-copy">Cadence and transport rules.</p>
+              </div>
+          <label class="field-group">
+            <span>Interval</span>
+            <select name="intervalMinutes">
+              ${[1, 5, 15, 30, 60]
+                .map(
+                  (value) =>
+                    `<option value="${value}" ${value === optionsViewModel.config.intervalMinutes ? "selected" : ""}>${value} minute${value === 1 ? "" : "s"}</option>`
+                )
+                .join("")}
+            </select>
+          </label>
+          <label class="checkbox-row">
+            <input name="scheduledSyncEnabled" type="checkbox" ${optionsViewModel.config.scheduledSyncEnabled ? "checked" : ""} />
+            <span>Enable scheduled sync</span>
+          </label>
+          <label class="checkbox-row">
+            <input name="allowInsecureHttp" type="checkbox" ${optionsViewModel.config.allowInsecureHttp ? "checked" : ""} />
+            <span>Allow plain HTTP for trusted local networks</span>
+          </label>
+            </div>
+          </div>
+          <div class="actions">
+            <button id="save-settings" class="primary-button" type="submit">Save settings</button>
+            <button id="check-connection" class="secondary-button" type="button">Check connection</button>
+            <button id="sync-now" class="secondary-button" type="button" ${isRunning ? "disabled" : ""}>${isRunning ? "Syncing..." : "Sync now"}</button>
+          </div>
+        </form>
+      </section>
+    </section>
+
+    <section class="content-section bundle-section" id="bundle-tools">
+      <div class="section-intro">
+        <h2>Bundle</h2>
+        <p class="section-copy">${bundleHeadingCopy}</p>
+      </div>
+      <section class="content-card bundle-card">
+        <div class="tool-actions">
+          <button id="export-bundle" class="secondary-button" type="button">Export bundle</button>
+          <button id="import-bundle" class="secondary-button" type="button">Import bundle</button>
+        </div>
+        <textarea id="bundle-json" class="bundle-textarea" placeholder="Encoded bundle JSON appears here"></textarea>
+      </section>
+    </section>
+  `;
+  const bookmarkPageContent = `
+    <section class="content-section bookmark-section" id="private-bookmark-manager">
+      <div class="section-header">
+        <div class="section-intro">
+          <h2>Bookmark manager</h2>
+          <p class="section-copy">${bookmarkHeadingCopy}</p>
+        </div>
+        <div class="section-summary">
+          <span>${escapeHtml(String(privateBookmarkManager.itemCount))} items</span>
+          <strong>${escapeHtml(activeFolderLabel)}</strong>
+          <p>${escapeHtml(bookmarkModeMeta)}</p>
+        </div>
+      </div>
+
+      <div class="bookmark-workspace">
+        <aside class="bookmark-pane bookmark-directory-pane">
+          <div class="bookmark-pane-header bookmark-pane-header-rail">
+            <div>
+              <h3>Directory</h3>
+              <p class="bookmark-pane-copy">${folderCount} folders indexed</p>
+            </div>
+          </div>
+          <div class="bookmark-pane-body bookmark-pane-body-rail">
+            ${renderPrivateFolderList(privateBookmarkManager.folderEntries)}
+          </div>
+        </aside>
+
+        <section class="bookmark-pane bookmark-content-pane">
+          <div class="bookmark-pane-toolbar bookmark-pane-toolbar-main">
+            <div class="bookmark-pane-header bookmark-pane-header-main">
+              <div>
+                <h3>${escapeHtml(contentHeading)}</h3>
+                <p class="bookmark-pane-copy">${escapeHtml(contentDescription)}</p>
+              </div>
+              <label class="bookmark-search-field">
+                <span>Search</span>
+                <input
+                  id="private-search"
+                  type="search"
+                  value="${escapeHtml(privateSearchQuery)}"
+                  placeholder="Search title or URL"
+                />
+              </label>
+            </div>
+            <div class="bookmark-toolbar-row">
+              <div class="bookmark-toolbar-actions">
+                <button type="button" class="secondary-button compact-button" data-private-action="create-folder" ${privateBookmarkManager.actions.createFolder.disabled ? "disabled" : ""}>
+                  ${escapeHtml(privateBookmarkManager.actions.createFolder.label)}
+                </button>
+                <button type="button" class="secondary-button compact-button" data-private-action="create-bookmark" ${privateBookmarkManager.actions.createBookmark.disabled ? "disabled" : ""}>
+                  ${escapeHtml(privateBookmarkManager.actions.createBookmark.label)}
+                </button>
+                <label class="field-group field-group-inline bookmark-move-field">
+                  <span>Move selection</span>
+                  <select id="private-move-destination" ${privateBookmarkManager.actions.move.disabled ? "disabled" : ""}>
+                    ${privateBookmarkManager.moveDestinations
+                      .map(
+                        (folder) => `
+                          <option value="${escapeHtml(folder.id)}" ${folder.isSelected ? "selected" : ""}>
+                            ${"&nbsp;&nbsp;".repeat(folder.depth)}${escapeHtml(folder.title)}
+                          </option>
+                        `
+                      )
+                      .join("")}
+                  </select>
+                </label>
+                <button type="button" class="secondary-button compact-button" data-private-action="move" ${privateBookmarkManager.actions.move.disabled ? "disabled" : ""}>
+                  ${escapeHtml(privateBookmarkManager.actions.move.label)}
+                </button>
+              </div>
+            </div>
+          </div>
+          <div class="bookmark-pane-body bookmark-pane-body-main">
+            ${renderPrivateVisibleNodes(
+              filteredVisibleNodes,
+              editingPrivateNodeId,
+              privateSearchQuery
+            )}
+          </div>
+        </section>
+      </div>
+    </section>
+  `;
+  const activityPageContent = `
+    <section class="content-section activity-section" id="activity-log">
+      <div class="section-intro">
+        <h2>Activity</h2>
+        <p class="section-copy">${activityHeadingCopy}</p>
+      </div>
+      <section class="content-card">
+        ${renderActivityLog(optionsViewModel.activityLog)}
+      </section>
+    </section>
+  `;
+  const activePageContent = activeWorkspacePage === "workspace"
+    ? workspacePageContent
+    : activeWorkspacePage === "bookmarks"
+      ? bookmarkPageContent
+      : activityPageContent;
 
   root.innerHTML = `
     <main class="page">
@@ -375,16 +674,10 @@ async function renderOptionsPage(privateBookmarksStateOverride?: Awaited<ReturnT
                   </div>
                 </div>
               `
-              : ""
+            : ""
           }
         </section>
-        <nav class="workspace-links" aria-label="Settings sections">
-          <a class="workspace-link" href="#overview">Overview</a>
-          <a class="workspace-link" href="#private-bookmark-manager">Bookmark manager</a>
-          <a class="workspace-link" href="#remote-sync">Remote sync</a>
-          <a class="workspace-link" href="#bundle-tools">Bundle</a>
-          <a class="workspace-link" href="#activity-log">Activity</a>
-        </nav>
+        ${renderWorkspaceTabs(activeWorkspacePage)}
         <div class="nav-meta-list">
           <div class="nav-meta-item">
             <span>Version</span>
@@ -403,244 +696,7 @@ async function renderOptionsPage(privateBookmarksStateOverride?: Awaited<ReturnT
             ? `<p class="notice notice-${pageMessage.type}" role="${pageMessage.type === "error" ? "alert" : "status"}" aria-live="${pageMessage.type === "error" ? "assertive" : "polite"}" aria-atomic="true">${escapeHtml(pageMessage.text)}</p>`
             : ""
         }
-
-        <section class="content-section overview-panel" id="overview">
-          <div class="section-intro">
-            <h2>Overview</h2>
-            <p class="section-copy">${overviewHeadingCopy}</p>
-          </div>
-          <div class="summary-strip">
-            <article class="summary-item">
-              <span>Bookmark source</span>
-              <strong>${escapeHtml(bookmarkSourceLabel)}</strong>
-              <p>${escapeHtml(bookmarkModeMeta)}</p>
-            </article>
-            <article class="summary-item">
-              <span>Last successful sync</span>
-              <strong>${escapeHtml(lastSuccessLabel)}</strong>
-              <p>${escapeHtml(revisionMeta)}</p>
-            </article>
-            <article class="summary-item">
-              <span>Sync cadence</span>
-              <strong>${escapeHtml(scheduleLabel)}</strong>
-              <p>${escapeHtml(cadenceMeta)}</p>
-            </article>
-          </div>
-        </section>
-
-        <section class="content-section bookmark-section" id="private-bookmark-manager">
-          <div class="section-header">
-            <div class="section-intro">
-              <h2>Bookmark manager</h2>
-              <p class="section-copy">${bookmarkHeadingCopy}</p>
-            </div>
-            <div class="section-summary">
-              <span>${escapeHtml(String(privateBookmarkManager.itemCount))} items</span>
-              <strong>${escapeHtml(activeFolderLabel)}</strong>
-              <p>${escapeHtml(bookmarkModeMeta)}</p>
-            </div>
-          </div>
-
-          <div class="bookmark-workspace">
-            <aside class="bookmark-pane bookmark-directory-pane">
-              <div class="bookmark-pane-header bookmark-pane-header-rail">
-                <div>
-                  <h3>Directory</h3>
-                  <p class="bookmark-pane-copy">${folderCount} folders indexed</p>
-                </div>
-              </div>
-              <div class="bookmark-pane-body bookmark-pane-body-rail">
-                ${renderPrivateFolderList(privateBookmarkManager.folderEntries)}
-              </div>
-            </aside>
-
-            <section class="bookmark-pane bookmark-content-pane">
-              <div class="bookmark-pane-toolbar bookmark-pane-toolbar-main">
-                <div class="bookmark-pane-header bookmark-pane-header-main">
-                  <div>
-                    <span class="bookmark-pane-kicker">${escapeHtml(treeViewLabel)}</span>
-                    <h3>${escapeHtml(contentHeading)}</h3>
-                    <p class="bookmark-pane-copy">${escapeHtml(contentDescription)}</p>
-                  </div>
-                  <div class="bookmark-context-chip">
-                    <span>Current folder</span>
-                    <strong>${escapeHtml(activeFolderLabel)}</strong>
-                  </div>
-                </div>
-                <div class="private-tabs" role="tablist" aria-label="Private bookmark views">
-                  ${privateBookmarkManager.tabs
-                    .map(
-                      (tab) => `
-                        <button
-                          type="button"
-                          role="tab"
-                          aria-selected="${tab.isActive ? "true" : "false"}"
-                          class="private-tab ${tab.isActive ? "is-active" : ""}"
-                          data-private-tab="${tab.id}"
-                        >
-                          ${escapeHtml(tab.label)}
-                        </button>
-                      `
-                    )
-                    .join("")}
-                </div>
-              </div>
-              <div class="bookmark-pane-body bookmark-pane-body-main">
-                ${renderPrivateVisibleNodes(privateBookmarkManager.visibleNodes, privateBookmarkManager.activeTab)}
-              </div>
-            </section>
-
-            <aside class="bookmark-pane bookmark-inspector-pane">
-              <div class="bookmark-pane-header bookmark-pane-header-rail">
-                <div>
-                  <h3>Details</h3>
-                  <p class="bookmark-pane-copy">${escapeHtml(selectionMeta)}</p>
-                </div>
-              </div>
-              <div class="bookmark-pane-body bookmark-pane-body-inspector">
-                <section class="inspector-section inspector-selection">
-                  <span>${escapeHtml(selectedNodeTypeLabel)}</span>
-                  <strong>${escapeHtml(selectionLabel)}</strong>
-                  <p class="inspector-url">${escapeHtml(selectedNodeUrl ?? selectionDescription)}</p>
-                </section>
-
-                <section class="inspector-section inspector-actions-section">
-                  <div class="inspector-action-group">
-                    <span>Create</span>
-                    <div class="inspector-button-grid inspector-button-grid-split">
-                      <button type="button" class="secondary-button" data-private-action="create-folder" ${privateBookmarkManager.actions.createFolder.disabled ? "disabled" : ""}>
-                        ${escapeHtml(privateBookmarkManager.actions.createFolder.label)}
-                      </button>
-                      <button type="button" class="secondary-button" data-private-action="create-bookmark" ${privateBookmarkManager.actions.createBookmark.disabled ? "disabled" : ""}>
-                        ${escapeHtml(privateBookmarkManager.actions.createBookmark.label)}
-                      </button>
-                    </div>
-                  </div>
-
-                  <div class="inspector-action-group">
-                    <span>Organize</span>
-                    <button type="button" class="secondary-button" data-private-action="rename" ${privateBookmarkManager.actions.rename.disabled ? "disabled" : ""}>
-                      ${escapeHtml(privateBookmarkManager.actions.rename.label)}
-                    </button>
-                    <label class="field-group field-group-inline">
-                      <span>Move selection</span>
-                      <select id="private-move-destination" ${privateBookmarkManager.actions.move.disabled ? "disabled" : ""}>
-                        ${privateBookmarkManager.moveDestinations
-                          .map(
-                            (folder) => `
-                              <option value="${escapeHtml(folder.id)}" ${folder.isSelected ? "selected" : ""}>
-                                ${"&nbsp;&nbsp;".repeat(folder.depth)}${escapeHtml(folder.title)}
-                              </option>
-                            `
-                          )
-                          .join("")}
-                      </select>
-                    </label>
-                    <button type="button" class="secondary-button" data-private-action="move" ${privateBookmarkManager.actions.move.disabled ? "disabled" : ""}>
-                      ${escapeHtml(privateBookmarkManager.actions.move.label)}
-                    </button>
-                  </div>
-
-                  <div class="inspector-action-group inspector-action-group-danger">
-                    <span>Remove</span>
-                    <button type="button" class="secondary-button danger-button" data-private-action="delete" ${privateBookmarkManager.actions.delete.disabled ? "disabled" : ""}>
-                      ${escapeHtml(privateBookmarkManager.actions.delete.label)}
-                    </button>
-                  </div>
-                </section>
-              </div>
-            </aside>
-          </div>
-        </section>
-
-        <section class="content-section settings-section" id="remote-sync">
-          <div class="section-intro">
-            <h2>Connection</h2>
-            <p class="section-copy">${remoteHeadingCopy}</p>
-          </div>
-          <section class="settings-chapter">
-            <form id="settings-form" class="form-grid">
-              <div class="chapter-grid">
-                <div class="field-cluster">
-                  <div class="cluster-heading">
-                    <h3>Endpoint</h3>
-                    <p class="section-copy">Remote path and credentials.</p>
-                  </div>
-              <label class="field-group">
-                <span>WebDAV URL</span>
-                <input name="webdavUrl" value="${escapeHtml(optionsViewModel.config.webdavUrl)}" placeholder="https://dav.example.com/" />
-              </label>
-              <label class="field-group">
-                <span>Username</span>
-                <input name="username" value="${escapeHtml(optionsViewModel.config.username)}" />
-              </label>
-              <label class="field-group">
-                <span>Password</span>
-                <input name="password" type="password" value="${escapeHtml(optionsViewModel.config.password)}" />
-              </label>
-              <label class="field-group">
-                <span>Base path</span>
-                <input name="basePath" value="${escapeHtml(optionsViewModel.config.basePath)}" />
-              </label>
-                </div>
-                <div class="field-cluster">
-                  <div class="cluster-heading">
-                    <h3>Schedule</h3>
-                    <p class="section-copy">Cadence and transport rules.</p>
-                  </div>
-              <label class="field-group">
-                <span>Interval</span>
-                <select name="intervalMinutes">
-                  ${[1, 5, 15, 30, 60]
-                    .map(
-                      (value) =>
-                        `<option value="${value}" ${value === optionsViewModel.config.intervalMinutes ? "selected" : ""}>${value} minute${value === 1 ? "" : "s"}</option>`
-                    )
-                    .join("")}
-                </select>
-              </label>
-              <label class="checkbox-row">
-                <input name="scheduledSyncEnabled" type="checkbox" ${optionsViewModel.config.scheduledSyncEnabled ? "checked" : ""} />
-                <span>Enable scheduled sync</span>
-              </label>
-              <label class="checkbox-row">
-                <input name="allowInsecureHttp" type="checkbox" ${optionsViewModel.config.allowInsecureHttp ? "checked" : ""} />
-                <span>Allow plain HTTP for trusted local networks</span>
-              </label>
-                </div>
-              </div>
-              <div class="actions">
-                <button id="save-settings" class="primary-button" type="submit">Save settings</button>
-                <button id="check-connection" class="secondary-button" type="button">Check connection</button>
-                <button id="sync-now" class="secondary-button" type="button" ${isRunning ? "disabled" : ""}>${isRunning ? "Syncing..." : "Sync now"}</button>
-              </div>
-            </form>
-          </section>
-        </section>
-
-        <section class="content-section bundle-section" id="bundle-tools">
-          <div class="section-intro">
-            <h2>Bundle</h2>
-            <p class="section-copy">${bundleHeadingCopy}</p>
-          </div>
-          <section class="content-card bundle-card">
-            <div class="tool-actions">
-              <button id="export-bundle" class="secondary-button" type="button">Export bundle</button>
-              <button id="import-bundle" class="secondary-button" type="button">Import bundle</button>
-            </div>
-            <textarea id="bundle-json" class="bundle-textarea" placeholder="Encoded bundle JSON appears here"></textarea>
-          </section>
-        </section>
-
-        <section class="content-section activity-section" id="activity-log">
-          <div class="section-intro">
-            <h2>Activity</h2>
-            <p class="section-copy">${activityHeadingCopy}</p>
-          </div>
-          <section class="content-card">
-            ${renderActivityLog(optionsViewModel.activityLog)}
-          </section>
-        </section>
+        ${activePageContent}
       </div>
     </main>
   `;
@@ -666,6 +722,37 @@ async function renderOptionsPage(privateBookmarksStateOverride?: Awaited<ReturnT
   const bundleTextarea = document.querySelector<HTMLTextAreaElement>("#bundle-json");
   const privateManagerRoot = document.querySelector<HTMLElement>("#private-bookmark-manager");
   const privateMoveDestination = document.querySelector<HTMLSelectElement>("#private-move-destination");
+  const privateSearchInput = document.querySelector<HTMLInputElement>("#private-search");
+  const workspaceLinks = document.querySelector<HTMLElement>(".workspace-links");
+
+  workspaceLinks?.addEventListener("click", async (event) => {
+    const target = event.target instanceof HTMLElement
+      ? event.target.closest<HTMLElement>("[data-workspace-page]")
+      : null;
+
+    if (!target) {
+      return;
+    }
+
+    const requestedPage = target.dataset.workspacePage as OptionsWorkspacePage | undefined;
+
+    if (!requestedPage || requestedPage === activeWorkspacePage) {
+      return;
+    }
+
+    activeWorkspacePage = requestedPage;
+    await renderOptionsPage(privateBookmarksState);
+  });
+
+  if (options?.focusSearch && privateSearchInput) {
+    window.requestAnimationFrame(() => {
+      privateSearchInput.focus();
+
+      if (typeof options.searchSelectionStart === "number" && typeof options.searchSelectionEnd === "number") {
+        privateSearchInput.setSelectionRange(options.searchSelectionStart, options.searchSelectionEnd);
+      }
+    });
+  }
 
   settingsForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -756,36 +843,86 @@ async function renderOptionsPage(privateBookmarksStateOverride?: Awaited<ReturnT
     }
   });
 
-  privateManagerRoot?.addEventListener("click", async (event) => {
-    const target = event.target instanceof HTMLElement
-      ? event.target.closest<HTMLElement>("[data-private-toggle-folder-id], [data-private-folder-id], [data-private-node-id], [data-private-tab], [data-private-action]")
+  privateSearchInput?.addEventListener("input", async () => {
+    privateSearchQuery = privateSearchInput.value;
+    await renderOptionsPage(privateBookmarksState, {
+      focusSearch: true,
+      searchSelectionStart: privateSearchInput.selectionStart,
+      searchSelectionEnd: privateSearchInput.selectionEnd
+    });
+  });
+
+  privateManagerRoot?.addEventListener("submit", async (event) => {
+    const form = event.target instanceof HTMLFormElement
+      ? event.target.closest<HTMLFormElement>("[data-private-edit-form-id]")
       : null;
 
-    if (!target) {
+    if (!form) {
       return;
     }
 
-    const toggledFolderId = target.dataset.privateToggleFolderId;
+    event.preventDefault();
 
-    if (toggledFolderId) {
-      const willCollapse = !collapsedPrivateFolderIds.has(toggledFolderId);
+    const editingNodeId = form.dataset.privateEditFormId;
 
-      if (willCollapse) {
-        collapsedPrivateFolderIds.add(toggledFolderId);
+    if (!editingNodeId) {
+      return;
+    }
 
-        if (
-          selectedPrivateNodeId &&
-          selectedPrivateNodeId !== toggledFolderId &&
-          folderContainsSelectedNode(privateBookmarksState.tree, toggledFolderId, selectedPrivateNodeId)
-        ) {
-          selectedPrivateFolderId = toggledFolderId;
-          selectedPrivateNodeId = toggledFolderId;
-        }
-      } else {
-        collapsedPrivateFolderIds.delete(toggledFolderId);
+    const node = findPrivateNodeById(privateBookmarksState.tree, editingNodeId);
+
+    if (!node) {
+      pageMessage = { type: "error", text: "Bookmark item could not be found." };
+      await renderOptionsPage(privateBookmarksState);
+      return;
+    }
+
+    const formData = new FormData(form);
+    const title = String(formData.get("title") ?? "").trim();
+
+    if (!title) {
+      pageMessage = { type: "error", text: "Title is required." };
+      await renderOptionsPage(privateBookmarksState);
+      return;
+    }
+
+    if (node.type === "bookmark") {
+      const validatedUrl = validatePrivateBookmarkUrl(String(formData.get("url") ?? ""));
+
+      if (!validatedUrl.ok) {
+        pageMessage = { type: "error", text: validatedUrl.message };
+        await renderOptionsPage(privateBookmarksState);
+        return;
       }
 
-      await renderOptionsPage(privateBookmarksState);
+      await applyPrivateBookmarkOperation(
+        {
+          type: "update-bookmark",
+          nodeId: node.id,
+          title,
+          url: validatedUrl.value
+        },
+        "Bookmark updated."
+      );
+      return;
+    }
+
+    await applyPrivateBookmarkOperation(
+      {
+        type: "rename-node",
+        nodeId: node.id,
+        title
+      },
+      "Folder updated."
+    );
+  });
+
+  privateManagerRoot?.addEventListener("click", async (event) => {
+    const target = event.target instanceof HTMLElement
+      ? event.target.closest<HTMLElement>("[data-private-folder-id], [data-private-node-id], [data-private-action], [data-private-edit-node-id], [data-private-cancel-edit], [data-private-delete-node-id]")
+      : null;
+
+    if (!target) {
       return;
     }
 
@@ -801,16 +938,54 @@ async function renderOptionsPage(privateBookmarksStateOverride?: Awaited<ReturnT
     const nodeId = target.dataset.privateNodeId;
 
     if (nodeId) {
+      const node = findPrivateNodeById(privateBookmarksState.tree, nodeId);
       selectedPrivateNodeId = nodeId;
+      if (node?.type === "folder") {
+        selectedPrivateFolderId = nodeId;
+      }
       await renderOptionsPage(privateBookmarksState);
       return;
     }
 
-    const tabId = target.dataset.privateTab as PrivateBookmarkTab | undefined;
+    const editNodeId = target.dataset.privateEditNodeId;
 
-    if (tabId) {
-      privateTab = tabId;
+    if (editNodeId) {
+      selectedPrivateNodeId = editNodeId;
+      editingPrivateNodeId = editNodeId;
       await renderOptionsPage(privateBookmarksState);
+      return;
+    }
+
+    if (target.dataset.privateCancelEdit) {
+      editingPrivateNodeId = null;
+      await renderOptionsPage(privateBookmarksState);
+      return;
+    }
+
+    const deleteNodeId = target.dataset.privateDeleteNodeId;
+
+    if (deleteNodeId) {
+      const node = findPrivateNodeById(privateBookmarksState.tree, deleteNodeId);
+
+      if (!node) {
+        pageMessage = { type: "error", text: "Bookmark item could not be found." };
+        await renderOptionsPage(privateBookmarksState);
+        return;
+      }
+
+      const confirmed = window.confirm(`Delete "${node.title}"?`);
+
+      if (!confirmed) {
+        return;
+      }
+
+      await applyPrivateBookmarkOperation(
+        {
+          type: "delete-node",
+          nodeId: deleteNodeId
+        },
+        node.type === "folder" ? "Folder deleted." : "Bookmark deleted."
+      );
       return;
     }
 
@@ -875,27 +1050,6 @@ async function renderOptionsPage(privateBookmarksStateOverride?: Awaited<ReturnT
         );
         return;
       }
-      case "rename": {
-        if (!selectedNode) {
-          return;
-        }
-
-        const title = window.prompt("New name", selectedNode.title);
-
-        if (!title || !title.trim()) {
-          return;
-        }
-
-        await applyPrivateBookmarkOperation(
-          {
-            type: "rename-node",
-            nodeId: selectedNode.id,
-            title: title.trim()
-          },
-          "Bookmark updated."
-        );
-        return;
-      }
       case "move": {
         if (!selectedNode || !privateMoveDestination?.value) {
           return;
@@ -910,25 +1064,6 @@ async function renderOptionsPage(privateBookmarksStateOverride?: Awaited<ReturnT
           "Bookmark moved."
         );
         return;
-      }
-      case "delete": {
-        if (!selectedNode) {
-          return;
-        }
-
-        const confirmed = window.confirm(`Delete "${selectedNode.title}"?`);
-
-        if (!confirmed) {
-          return;
-        }
-
-        await applyPrivateBookmarkOperation(
-          {
-            type: "delete-node",
-            nodeId: selectedNode.id
-          },
-          "Bookmark deleted."
-        );
       }
     }
   });
