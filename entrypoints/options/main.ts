@@ -34,6 +34,7 @@ let selectedPrivateFolderId: string | null = null;
 let selectedPrivateNodeId: string | null = null;
 let privateSearchQuery = "";
 let editingPrivateNodeId: string | null = null;
+const privateEditDrafts = new Map<string, { title: string; url?: string }>();
 
 function escapeHtml(value: string): string {
   return value
@@ -88,7 +89,7 @@ function renderWorkspaceTabs(activePage: OptionsWorkspacePage): string {
               type="button"
               class="workspace-link ${tab.id === activePage ? "is-active" : ""}"
               data-workspace-page="${tab.id}"
-              aria-current="${tab.id === activePage ? "page" : "false"}"
+              ${tab.id === activePage ? 'aria-current="page"' : ""}
             >
               ${escapeHtml(tab.label)}
             </button>
@@ -149,8 +150,12 @@ function renderPrivateVisibleNodes(
   return `
     <div class="private-node-list" role="list">
       ${nodes
-        .map(
-          (node) => `
+        .map((node) => {
+          const draft = editingNodeId === node.id ? privateEditDrafts.get(node.id) : undefined;
+          const draftTitle = draft?.title ?? node.title;
+          const draftUrl = draft?.url ?? node.url ?? "";
+
+          return `
             <div class="private-node-row private-node-row-${node.type}">
               <div class="private-node-card ${node.isSelected ? "is-selected" : ""}">
                 ${
@@ -161,7 +166,7 @@ function renderPrivateVisibleNodes(
                           <input
                             class="private-node-inline-input"
                             name="title"
-                            value="${escapeHtml(node.title)}"
+                            value="${escapeHtml(draftTitle)}"
                             required
                             placeholder="${node.type === "folder" ? "Folder title" : "Bookmark title"}"
                           />
@@ -173,7 +178,7 @@ function renderPrivateVisibleNodes(
                                   name="url"
                                   type="url"
                                   required
-                                  value="${escapeHtml(node.url ?? "")}"
+                                  value="${escapeHtml(draftUrl)}"
                                   placeholder="https://example.com/"
                                 />
                               `
@@ -240,8 +245,8 @@ function renderPrivateVisibleNodes(
                 }
               </div>
             </div>
-          `
-        )
+          `;
+        })
         .join("")}
     </div>
   `;
@@ -363,6 +368,7 @@ async function applyPrivateBookmarkOperation(
       (operation.type === "delete-node" || operation.type === "update-bookmark" || operation.type === "rename-node")
       && editingPrivateNodeId === ("nodeId" in operation ? operation.nodeId : null)
     ) {
+      privateEditDrafts.delete(operation.nodeId);
       editingPrivateNodeId = null;
     }
 
@@ -438,7 +444,6 @@ async function renderOptionsPage(
   const cadenceMeta = optionsViewModel.config.scheduledSyncEnabled ? "Automatic" : "Manual";
   const revisionMeta = optionsViewModel.syncState.lastRevision ? `Rev ${optionsViewModel.syncState.lastRevision}` : "No revision";
   const overviewHeadingCopy = "Status and source";
-  const bookmarkHeadingCopy = "Shared private library";
   const remoteHeadingCopy = "Shared endpoint";
   const bundleHeadingCopy = "Manual snapshot tools";
   const activityHeadingCopy = "Recent events";
@@ -551,7 +556,7 @@ async function renderOptionsPage(
       <div class="section-header">
         <div class="section-intro">
           <h2>Bookmark manager</h2>
-          <p class="section-copy">${bookmarkHeadingCopy}</p>
+          <p class="section-copy">${escapeHtml(privateBookmarkManager.modeHint)}</p>
         </div>
         <div class="section-summary">
           <span>${escapeHtml(String(privateBookmarkManager.itemCount))} items</span>
@@ -879,6 +884,12 @@ async function renderOptionsPage(
 
     const formData = new FormData(form);
     const title = String(formData.get("title") ?? "").trim();
+    const draftUrl = String(formData.get("url") ?? "");
+
+    privateEditDrafts.set(editingNodeId, {
+      title,
+      ...(node.type === "bookmark" ? { url: draftUrl } : {})
+    });
 
     if (!title) {
       pageMessage = { type: "error", text: "Title is required." };
@@ -887,7 +898,7 @@ async function renderOptionsPage(
     }
 
     if (node.type === "bookmark") {
-      const validatedUrl = validatePrivateBookmarkUrl(String(formData.get("url") ?? ""));
+      const validatedUrl = validatePrivateBookmarkUrl(draftUrl);
 
       if (!validatedUrl.ok) {
         pageMessage = { type: "error", text: validatedUrl.message };
@@ -957,6 +968,9 @@ async function renderOptionsPage(
     }
 
     if (target.dataset.privateCancelEdit) {
+      if (editingPrivateNodeId) {
+        privateEditDrafts.delete(editingPrivateNodeId);
+      }
       editingPrivateNodeId = null;
       await renderOptionsPage(privateBookmarksState);
       return;
