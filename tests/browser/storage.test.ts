@@ -1,12 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { installMockIndexedDb } from "../helpers/mock-indexeddb";
 type StorageState = Record<string, unknown>;
 
 const storageState: StorageState = {};
 
-vi.mock("webextension-polyfill", () => {
+vi.mock("wxt/browser", () => {
   return {
-    default: {
+    browser: {
       storage: {
         local: {
           async get(key?: string | string[]) {
@@ -34,7 +35,9 @@ vi.mock("webextension-polyfill", () => {
   };
 });
 
-import { getBaseSnapshot, setBaseSnapshot } from "../../src/core/browser/storage";
+import { decodeBundle } from "../../src/core/format/decode";
+import type { EncodedBookmarkBundle } from "../../src/core/format/schema";
+import { getBaseSnapshot, getRecoverySnapshot, setBaseSnapshot, setRecoverySnapshot } from "../../src/core/browser/storage";
 import { getConfig, setConfig, validateSyncConfigForSync } from "../../src/core/state/config";
 import type { BookmarkBundle } from "../../src/core/format/schema";
 
@@ -138,5 +141,48 @@ describe("config storage", () => {
     await setBaseSnapshot(sampleBundle);
 
     expect(await getBaseSnapshot()).toEqual(sampleBundle);
+    expect(storageState["onesync.baseSnapshot"]).toMatchObject({
+      kind: "onesync.bundle",
+      bundleVersion: 1,
+      encoding: "base64url+gzip+json"
+    });
+    await expect(
+      decodeBundle(storageState["onesync.baseSnapshot"] as EncodedBookmarkBundle)
+    ).resolves.toEqual(sampleBundle);
+  });
+
+  it("stores and retrieves the recovery snapshot", async () => {
+    await setRecoverySnapshot(sampleBundle);
+
+    expect(await getRecoverySnapshot()).toEqual(sampleBundle);
+    expect(storageState["onesync.recoverySnapshot"]).toMatchObject({
+      kind: "onesync.bundle",
+      bundleVersion: 1,
+      encoding: "base64url+gzip+json"
+    });
+  });
+
+  it("can still read legacy uncompressed snapshots", async () => {
+    storageState["onesync.baseSnapshot"] = sampleBundle;
+
+    await expect(getBaseSnapshot()).resolves.toEqual(sampleBundle);
+  });
+
+  it("stores base snapshots in indexedDB when available", async () => {
+    const mockIndexedDb = installMockIndexedDb();
+
+    try {
+      await setBaseSnapshot(sampleBundle);
+
+      expect(storageState["onesync.baseSnapshot"]).toBeUndefined();
+      expect(mockIndexedDb.read("bundles", "onesync.baseSnapshot")).toMatchObject({
+        kind: "onesync.bundle",
+        bundleVersion: 1,
+        encoding: "base64url+gzip+json"
+      });
+      await expect(getBaseSnapshot()).resolves.toEqual(sampleBundle);
+    } finally {
+      mockIndexedDb.uninstall();
+    }
   });
 });

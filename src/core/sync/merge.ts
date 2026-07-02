@@ -6,18 +6,57 @@ function newestNode(left: BookmarkNode, right: BookmarkNode): BookmarkNode {
   return left.updatedAt >= right.updatedAt ? left : right;
 }
 
-function mergeFolderChildren(local: string[], remote: string[]): string[] {
-  const seen = new Set<string>();
-  const merged: string[] = [];
+function findParentFolderId(bundle: BookmarkBundle, nodeId: string): string | null {
+  for (const [candidateId, candidate] of Object.entries(bundle.nodes)) {
+    if (candidate.type !== "folder") {
+      continue;
+    }
 
-  for (const childId of [...local, ...remote]) {
-    if (!seen.has(childId)) {
-      seen.add(childId);
-      merged.push(childId);
+    if (candidate.children.includes(nodeId)) {
+      return candidateId;
     }
   }
 
-  return merged;
+  return null;
+}
+
+function resolveParentFolderId(
+  base: BookmarkBundle | null,
+  local: BookmarkBundle,
+  remote: BookmarkBundle,
+  nodeId: string
+): string | null {
+  const localParentId = findParentFolderId(local, nodeId);
+  const remoteParentId = findParentFolderId(remote, nodeId);
+  const baseParentId = base ? findParentFolderId(base, nodeId) : null;
+  const localNode = local.nodes[nodeId];
+  const remoteNode = remote.nodes[nodeId];
+
+  if (localParentId === remoteParentId) {
+    return localParentId;
+  }
+
+  if (base && localParentId === baseParentId && remoteParentId !== baseParentId) {
+    return remoteParentId;
+  }
+
+  if (base && remoteParentId === baseParentId && localParentId !== baseParentId) {
+    return localParentId;
+  }
+
+  if (localParentId && !remoteParentId) {
+    return localParentId;
+  }
+
+  if (remoteParentId && !localParentId) {
+    return remoteParentId;
+  }
+
+  if (localParentId && remoteParentId && localNode && remoteNode) {
+    return localNode.updatedAt >= remoteNode.updatedAt ? localParentId : remoteParentId;
+  }
+
+  return null;
 }
 
 function deriveDeletionTombstones(base: BookmarkBundle | null, current: BookmarkBundle): BookmarkTombstone[] {
@@ -70,7 +109,7 @@ export function mergeBundles(
         id: selectedNode.id,
         type: "folder",
         title: selectedNode.title,
-        children: mergeFolderChildren(localNode.children, remoteNode.children),
+        children: [],
         addedAt: selectedNode.addedAt,
         updatedAt: selectedNode.updatedAt
       };
@@ -114,6 +153,46 @@ export function mergeBundles(
     }
 
     node.children = node.children.filter((childId) => !deletedNodeIds.has(childId));
+  }
+
+  const folderIds = Object.entries(mergedNodes)
+    .filter(([, node]) => node.type === "folder")
+    .map(([nodeId]) => nodeId);
+
+  for (const folderId of folderIds) {
+    const orderedChildren: string[] = [];
+    const seen = new Set<string>();
+    const localFolder = local.nodes[folderId];
+    const remoteFolder = remote.nodes[folderId];
+
+    for (const childId of [
+      ...(localFolder?.type === "folder" ? localFolder.children : []),
+      ...(remoteFolder?.type === "folder" ? remoteFolder.children : [])
+    ]) {
+      if (seen.has(childId) || !mergedNodes[childId]) {
+        continue;
+      }
+
+      const resolvedParentId = resolveParentFolderId(base, local, remote, childId);
+
+      if (resolvedParentId !== folderId || !mergedNodes[resolvedParentId]) {
+        continue;
+      }
+
+      seen.add(childId);
+      orderedChildren.push(childId);
+    }
+
+    const mergedFolder = mergedNodes[folderId];
+
+    if (!mergedFolder || mergedFolder.type !== "folder") {
+      continue;
+    }
+
+    mergedNodes[folderId] = {
+      ...mergedFolder,
+      children: orderedChildren
+    };
   }
 
   return normalizeBundle({

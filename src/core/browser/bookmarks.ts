@@ -1,10 +1,21 @@
-import browser from "webextension-polyfill";
+import { browser } from "wxt/browser";
 import type { BookmarkBundle, BookmarkNode } from "../format/schema";
 import { normalizeBundle } from "../format/schema";
+import { validatePrivateBookmarkUrl } from "../private-bookmarks/validation";
 import type { SyncConfig } from "../state/config";
+import { clearStoredBundle, loadStoredBundle, saveStoredBundle } from "./bundle-storage";
 
-type NativeBookmarkTreeNode = browser.Bookmarks.BookmarkTreeNode;
+type NativeBookmarkTreeNode = {
+  id: string;
+  title?: string;
+  url?: string;
+  children?: NativeBookmarkTreeNode[];
+  dateAdded?: number;
+  dateGroupModified?: number;
+};
 type SemanticRoot = "toolbar" | "menu" | "mobile" | "unfiled";
+const SEMANTIC_ROOT_ORDER: SemanticRoot[] = ["toolbar", "menu", "mobile", "unfiled"];
+export type BookmarkStorageMode = "native" | "private" | "unavailable";
 export type BookmarkItemProgress = {
   processed: number;
   total: number;
@@ -20,7 +31,12 @@ type ProgressTracker = {
   onProgress?: (progress: BookmarkItemProgress) => void | Promise<void>;
 };
 
+export const BOOKMARKS_API_UNAVAILABLE_MESSAGE =
+  "Bookmarks API is unavailable in this browser runtime. Safari on this version may not expose bookmark access to Web Extensions.";
+
 const SYNTHETIC_ROOT_PREFIX = "onesync.synthetic";
+const PRIVATE_BOOKMARKS_KEY = "onesync.privateBookmarks";
+const PRIVATE_BOOKMARKS_NATIVE_FALLBACK_KEY = "onesync.privateBookmarksNativeFallback";
 const SYNTHETIC_ROOT_TITLES: Record<SemanticRoot, string> = {
   toolbar: "Bookmarks Bar",
   menu: "Bookmarks Menu",
@@ -28,10 +44,68 @@ const SYNTHETIC_ROOT_TITLES: Record<SemanticRoot, string> = {
   unfiled: "Unfiled Bookmarks"
 };
 
-const TOOLBAR_ROOT_PATTERNS = [/toolbar/iu, /bookmarks\s+bar/iu, /favorites\s+bar/iu];
-const MENU_ROOT_PATTERNS = [/menu/iu, /other\s+bookmarks/iu, /favorites$/iu];
+const TOOLBAR_ROOT_PATTERNS = [/toolbar/iu, /bookmarks\s+bar/iu, /favorites(?:\s+bar)?$/iu];
+const MENU_ROOT_PATTERNS = [/menu/iu, /bookmarks\s+menu/iu];
 const MOBILE_ROOT_PATTERNS = [/mobile/iu];
-const UNFILED_ROOT_PATTERNS = [/unfiled/iu, /other\s+bookmarks/iu];
+const UNFILED_ROOT_PATTERNS = [/unfiled/iu, /other\s+bookmarks/iu, /other\s+favorites/iu];
+
+type BookmarksApi = typeof browser.bookmarks;
+
+function hasBookmarksApi(): boolean {
+  const bookmarksApi = browser.bookmarks;
+
+  return Boolean(
+    bookmarksApi &&
+      typeof bookmarksApi.getTree === "function" &&
+      typeof bookmarksApi.create === "function" &&
+      typeof bookmarksApi.remove === "function" &&
+      typeof bookmarksApi.removeTree === "function"
+  );
+}
+
+function requirePrivateBookmarkStorage() {
+  const storageArea = browser.storage?.local;
+
+  if (!storageArea || typeof storageArea.get !== "function" || typeof storageArea.set !== "function") {
+    throw new Error(BOOKMARKS_API_UNAVAILABLE_MESSAGE);
+  }
+
+  return storageArea;
+}
+
+function requireBookmarksApi(): BookmarksApi {
+  if (!hasBookmarksApi()) {
+    throw new Error(BOOKMARKS_API_UNAVAILABLE_MESSAGE);
+  }
+
+  return browser.bookmarks;
+}
+
+export function getBookmarksApiAvailabilityError(): string | null {
+  if (getBookmarkStorageMode() !== "unavailable") {
+    return null;
+  }
+
+  try {
+    requirePrivateBookmarkStorage();
+    return null;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+}
+
+export function getBookmarkStorageMode(): BookmarkStorageMode {
+  if (hasBookmarksApi()) {
+    return "native";
+  }
+
+  try {
+    requirePrivateBookmarkStorage();
+    return "private";
+  } catch {
+    return "unavailable";
+  }
+}
 
 function timestampFromNode(node: NativeBookmarkTreeNode, fallback: string): string {
   if (typeof node.dateAdded === "number") {
@@ -67,6 +141,20 @@ function countBundleDescendants(bundle: BookmarkBundle, nodeIds: string[]): numb
   return total;
 }
 
+function assertBundleBookmarkUrlsAreSupported(bundle: BookmarkBundle): void {
+  for (const node of Object.values(bundle.nodes)) {
+    if (node.type !== "bookmark") {
+      continue;
+    }
+
+    const validatedUrl = validatePrivateBookmarkUrl(node.url);
+
+    if (!validatedUrl.ok) {
+      throw new Error(`${validatedUrl.message} (bookmark "${node.title}" / ${node.id})`);
+    }
+  }
+}
+
 async function emitProgress(tracker: ProgressTracker | null): Promise<void> {
   if (!tracker?.onProgress) {
     return;
@@ -88,22 +176,34 @@ async function markProgress(tracker: ProgressTracker | null): Promise<void> {
 }
 
 function detectRootBucket(node: NativeBookmarkTreeNode, index: number): SemanticRoot | null {
-  const title = node.title ?? "";
+  const label = [node.id, node.title ?? ""].filter(Boolean).join(" ");
 
-  if (TOOLBAR_ROOT_PATTERNS.some((pattern) => pattern.test(title)) || index === 0) {
+  if (TOOLBAR_ROOT_PATTERNS.some((pattern) => pattern.test(label))) {
     return "toolbar";
   }
 
-  if (MOBILE_ROOT_PATTERNS.some((pattern) => pattern.test(title))) {
+  if (MOBILE_ROOT_PATTERNS.some((pattern) => pattern.test(label))) {
     return "mobile";
   }
 
-  if (UNFILED_ROOT_PATTERNS.some((pattern) => pattern.test(title))) {
+  if (UNFILED_ROOT_PATTERNS.some((pattern) => pattern.test(label))) {
     return "unfiled";
   }
 
-  if (MENU_ROOT_PATTERNS.some((pattern) => pattern.test(title)) || index === 1) {
+  if (MENU_ROOT_PATTERNS.some((pattern) => pattern.test(label))) {
     return "menu";
+  }
+
+  if (index === 0) {
+    return "toolbar";
+  }
+
+  if (index === 1) {
+    return "menu";
+  }
+
+  if (index === 2) {
+    return "mobile";
   }
 
   return null;
@@ -170,13 +270,15 @@ async function projectNodeInternal(
 }
 
 async function removeBookmarkNode(id: string, isFolder: boolean): Promise<void> {
+  const bookmarksApi = requireBookmarksApi();
+
   try {
     if (isFolder) {
-      await browser.bookmarks.removeTree(id);
+      await bookmarksApi.removeTree(id);
       return;
     }
 
-    await browser.bookmarks.remove(id);
+    await bookmarksApi.remove(id);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
 
@@ -195,6 +297,8 @@ async function createChildrenFromBundle(
   bundle: BookmarkBundle,
   progressTracker: ProgressTracker | null
 ): Promise<void> {
+  const bookmarksApi = requireBookmarksApi();
+
   for (const childId of childIds) {
     const node = bundle.nodes[childId];
 
@@ -204,7 +308,7 @@ async function createChildrenFromBundle(
 
     if (node.type === "bookmark") {
       try {
-        await browser.bookmarks.create({
+        await bookmarksApi.create({
           parentId,
           title: node.title,
           url: node.url
@@ -221,7 +325,7 @@ async function createChildrenFromBundle(
 
     let createdFolder: NativeBookmarkTreeNode;
     try {
-      createdFolder = await browser.bookmarks.create({
+      createdFolder = await bookmarksApi.create({
         parentId,
         title: node.title
       });
@@ -237,9 +341,60 @@ async function createChildrenFromBundle(
   }
 }
 
+function getGroupedBundleRootIds(
+  bundle: BookmarkBundle,
+  rootNames: SemanticRoot[]
+): string[] {
+  const rootIds: string[] = [];
+  const seenRootIds = new Set<string>();
+
+  for (const rootName of rootNames) {
+    const bundleRootId = bundle.roots[rootName];
+
+    if (!bundleRootId || seenRootIds.has(bundleRootId)) {
+      continue;
+    }
+
+    seenRootIds.add(bundleRootId);
+    rootIds.push(bundleRootId);
+  }
+
+  return rootIds;
+}
+
+function buildNativeRootGroups(
+  nativeRoots: Partial<Record<SemanticRoot, NativeBookmarkTreeNode>>
+): Array<{ nativeRoot: NativeBookmarkTreeNode; rootNames: SemanticRoot[] }> {
+  const groups = new Map<string, { nativeRoot: NativeBookmarkTreeNode; rootNames: SemanticRoot[] }>();
+
+  for (const rootName of SEMANTIC_ROOT_ORDER) {
+    const nativeRoot = nativeRoots[rootName];
+
+    if (!nativeRoot) {
+      continue;
+    }
+
+    const existing = groups.get(nativeRoot.id);
+
+    if (existing) {
+      existing.rootNames.push(rootName);
+      continue;
+    }
+
+    groups.set(nativeRoot.id, {
+      nativeRoot,
+      rootNames: [rootName]
+    });
+  }
+
+  return Array.from(groups.values());
+}
+
 async function resolveNativeRoots(): Promise<Partial<Record<SemanticRoot, NativeBookmarkTreeNode>>> {
+  const bookmarksApi = requireBookmarksApi();
+
   try {
-    const [treeRoot] = await browser.bookmarks.getTree();
+    const [treeRoot] = await bookmarksApi.getTree();
     const children = treeRoot.children ?? [];
     const matches = new Map<SemanticRoot, NativeBookmarkTreeNode>();
 
@@ -275,11 +430,142 @@ function materializeSyntheticRoot(rootName: SemanticRoot, nodes: Record<string, 
   return rootId;
 }
 
+function createEmptyPrivateBundle(config: SyncConfig): BookmarkBundle {
+  const generatedAt = new Date().toISOString();
+  const nodes: Record<string, BookmarkNode> = {};
+
+  const toolbarId = materializeSyntheticRoot("toolbar", nodes, generatedAt);
+  const menuId = materializeSyntheticRoot("menu", nodes, generatedAt);
+  const mobileId = materializeSyntheticRoot("mobile", nodes, generatedAt);
+  const unfiledId = materializeSyntheticRoot("unfiled", nodes, generatedAt);
+
+  return normalizeBundle({
+    kind: "onesync.bookmarks",
+    schemaVersion: 1,
+    revision: `${generatedAt}#${config.deviceId}#private`,
+    deviceId: config.deviceId,
+    generatedAt,
+    roots: {
+      toolbar: toolbarId,
+      menu: menuId,
+      mobile: mobileId,
+      unfiled: unfiledId
+    },
+    nodes,
+    tombstones: [],
+    meta: {
+      client: "onesync",
+      clientVersion: "0.1.3"
+    }
+  });
+}
+
+async function loadPrivateBookmarkBundle(config: SyncConfig): Promise<BookmarkBundle> {
+  const storageArea = requirePrivateBookmarkStorage();
+  const storedBundle = await loadStoredBundle(storageArea, PRIVATE_BOOKMARKS_KEY);
+
+  if (storedBundle) {
+    const generatedAt = new Date().toISOString();
+
+    return {
+      ...storedBundle,
+      revision: `${generatedAt}#${config.deviceId}#snapshot`,
+      deviceId: config.deviceId,
+      generatedAt
+    };
+  }
+
+  const emptyBundle = createEmptyPrivateBundle(config);
+  await saveStoredBundle(storageArea, PRIVATE_BOOKMARKS_KEY, emptyBundle);
+  return emptyBundle;
+}
+
+async function savePrivateBookmarkBundle(bundle: BookmarkBundle): Promise<BookmarkBundle> {
+  const storageArea = requirePrivateBookmarkStorage();
+  return saveStoredBundle(storageArea, PRIVATE_BOOKMARKS_KEY, bundle);
+}
+
+async function saveNativeFallbackBundle(bundle: BookmarkBundle): Promise<BookmarkBundle> {
+  const storageArea = requirePrivateBookmarkStorage();
+  return saveStoredBundle(storageArea, PRIVATE_BOOKMARKS_NATIVE_FALLBACK_KEY, bundle);
+}
+
+function snapshotSharedBundle(bundle: BookmarkBundle, config: SyncConfig): BookmarkBundle {
+  const generatedAt = new Date().toISOString();
+
+  return {
+    ...bundle,
+    revision: `${generatedAt}#${config.deviceId}#snapshot`,
+    deviceId: config.deviceId,
+    generatedAt
+  };
+}
+
+export async function loadSavedSharedBundleFallback(): Promise<BookmarkBundle | null> {
+  const storageArea = requirePrivateBookmarkStorage();
+  return loadStoredBundle(storageArea, PRIVATE_BOOKMARKS_NATIVE_FALLBACK_KEY);
+}
+
+export async function clearSavedSharedBundleFallback(): Promise<void> {
+  const storageArea = requirePrivateBookmarkStorage();
+  await clearStoredBundle(storageArea, PRIVATE_BOOKMARKS_NATIVE_FALLBACK_KEY);
+}
+
+export async function loadSharedBookmarkBundle(
+  config: SyncConfig,
+  options: BookmarkOperationOptions = {}
+): Promise<BookmarkBundle> {
+  if (hasBookmarksApi()) {
+    let savedFallbackBundle: BookmarkBundle | null = null;
+
+    try {
+      savedFallbackBundle = await loadSavedSharedBundleFallback();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+
+      if (message !== BOOKMARKS_API_UNAVAILABLE_MESSAGE) {
+        throw error;
+      }
+
+      savedFallbackBundle = null;
+    }
+
+    if (savedFallbackBundle) {
+      const sharedBundle = snapshotSharedBundle(savedFallbackBundle, config);
+
+      if (options.onProgress) {
+        const total = countBundleDescendants(sharedBundle, Object.values(sharedBundle.roots));
+        await options.onProgress({
+          processed: total,
+          total
+        });
+      }
+
+      return sharedBundle;
+    }
+  }
+
+  return listLocalBookmarks(config, options);
+}
+
 export async function listLocalBookmarks(
   config: SyncConfig,
   options: BookmarkOperationOptions = {}
 ): Promise<BookmarkBundle> {
   try {
+    if (!hasBookmarksApi()) {
+      const privateBundle = await loadPrivateBookmarkBundle(config);
+
+      if (options.onProgress) {
+        await options.onProgress({
+          processed: 0,
+          total: 0
+        });
+      }
+
+      return privateBundle;
+    }
+
     const nativeRoots = await resolveNativeRoots();
     const generatedAt = new Date().toISOString();
     const nodes: Record<string, BookmarkNode> = {};
@@ -352,55 +638,77 @@ export async function applyBundleToBookmarks(
   bundle: BookmarkBundle,
   options: BookmarkOperationOptions = {}
 ): Promise<void> {
+  assertBundleBookmarkUrlsAreSupported(bundle);
+
   try {
+    if (!hasBookmarksApi()) {
+      const normalizedBundle = await savePrivateBookmarkBundle(bundle);
+
+      if (options.onProgress) {
+        const total = countBundleDescendants(normalizedBundle, Object.values(normalizedBundle.roots));
+        await options.onProgress({
+          processed: total,
+          total
+        });
+      }
+
+      return;
+    }
+
     const nativeRoots = await resolveNativeRoots();
+    const nativeRootGroups = buildNativeRootGroups(nativeRoots);
     const countedNativeRootIds = new Set<string>();
     const progressTracker: ProgressTracker | null = options.onProgress
       ? {
           processed: 0,
-          total: (Object.keys(nativeRoots) as SemanticRoot[]).reduce((total, rootName) => {
-            const nativeRoot = nativeRoots[rootName];
-
-            if (!nativeRoot || countedNativeRootIds.has(nativeRoot.id)) {
+          total: nativeRootGroups.reduce((total, group) => {
+            if (countedNativeRootIds.has(group.nativeRoot.id)) {
               return total;
             }
 
-            countedNativeRootIds.add(nativeRoot.id);
+            countedNativeRootIds.add(group.nativeRoot.id);
 
-            const bundleRootNode = bundle.nodes[bundle.roots[rootName]];
+            return (
+              total +
+              getGroupedBundleRootIds(bundle, group.rootNames).reduce((groupTotal, bundleRootId) => {
+                const bundleRootNode = bundle.nodes[bundleRootId];
 
-            if (!bundleRootNode || bundleRootNode.type !== "folder") {
-              return total;
-            }
+                if (!bundleRootNode || bundleRootNode.type !== "folder") {
+                  return groupTotal;
+                }
 
-            return total + countBundleDescendants(bundle, bundleRootNode.children);
+                return groupTotal + countBundleDescendants(bundle, bundleRootNode.children);
+              }, 0)
+            );
           }, 0),
           onProgress: options.onProgress
         }
       : null;
-    const appliedNativeRootIds = new Set<string>();
-
-    for (const rootName of Object.keys(nativeRoots) as SemanticRoot[]) {
-      const nativeRoot = nativeRoots[rootName];
-      if (!nativeRoot || appliedNativeRootIds.has(nativeRoot.id)) {
-        continue;
-      }
-
-      appliedNativeRootIds.add(nativeRoot.id);
-
-      const bundleRootId = bundle.roots[rootName];
-      const bundleRootNode = bundle.nodes[bundleRootId];
-
-      if (!bundleRootNode || bundleRootNode.type !== "folder") {
-        continue;
-      }
+    for (const group of nativeRootGroups) {
+      const { nativeRoot, rootNames } = group;
 
       for (const childNode of nativeRoot.children ?? []) {
         await removeBookmarkNode(childNode.id, !childNode.url);
       }
 
-      await createChildrenFromBundle(nativeRoot.id, nativeRoot.id, bundleRootNode.children, bundle, progressTracker);
+      for (const bundleRootId of getGroupedBundleRootIds(bundle, rootNames)) {
+        const bundleRootNode = bundle.nodes[bundleRootId];
+
+        if (!bundleRootNode || bundleRootNode.type !== "folder") {
+          continue;
+        }
+
+        await createChildrenFromBundle(
+          nativeRoot.id,
+          nativeRoot.id,
+          bundleRootNode.children,
+          bundle,
+          progressTracker
+        );
+      }
     }
+
+    await clearSavedSharedBundleFallback();
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
 
@@ -409,5 +717,32 @@ export async function applyBundleToBookmarks(
     }
 
     throw new Error(`Failed to apply bookmark bundle locally: ${message}`);
+  }
+}
+
+export async function applySharedBundleLocally(
+  bundle: BookmarkBundle,
+  mode: BookmarkStorageMode,
+  options: BookmarkOperationOptions = {}
+): Promise<void> {
+  if (mode === "unavailable") {
+    throw new Error(BOOKMARKS_API_UNAVAILABLE_MESSAGE);
+  }
+
+  assertBundleBookmarkUrlsAreSupported(bundle);
+
+  if (mode === "private") {
+    await applyBundleToBookmarks(bundle, options);
+    await clearSavedSharedBundleFallback();
+    return;
+  }
+
+  try {
+    await applyBundleToBookmarks(bundle, options);
+    await clearSavedSharedBundleFallback();
+  } catch (error) {
+    await saveNativeFallbackBundle(bundle);
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Shared data saved, browser bookmarks not updated: ${message}`);
   }
 }

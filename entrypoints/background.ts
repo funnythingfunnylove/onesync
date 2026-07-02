@@ -1,7 +1,15 @@
-import browser from "webextension-polyfill";
-import { applyBundleToBookmarks, listLocalBookmarks } from "../src/core/browser/bookmarks";
+import { browser } from "wxt/browser";
+import {
+  applySharedBundleLocally,
+  applyBundleToBookmarks,
+  getBookmarkStorageMode,
+  loadSharedBookmarkBundle
+} from "../src/core/browser/bookmarks";
+import { loadPrivateManagerBundle, savePrivateManagerBundle } from "../src/core/browser/private-bookmarks";
 import { setBaseSnapshot, setRecoverySnapshot } from "../src/core/browser/storage";
 import { appendActivityLog, getActivityLog } from "../src/core/state/activity-log";
+import { applyPrivateBookmarkOperation } from "../src/core/private-bookmarks/mutators";
+import { buildPrivateBookmarksViewState } from "../src/core/private-bookmarks/view-state";
 import { getConfig, setConfig } from "../src/core/state/config";
 import { getSyncConfigReadyError, validateSyncConfigForSync } from "../src/core/state/config-validation";
 import { getSyncState, setSyncState } from "../src/core/state/sync-state";
@@ -13,12 +21,45 @@ import { runSyncSingleFlight } from "../src/core/sync/singleflight";
 import { createWebDavClient } from "../src/core/webdav/client";
 import { syncOnce } from "../src/core/sync/sync-engine";
 import { formatSyncProgressLabel, formatSyncStatusLabel, getSyncProgressPercent } from "../src/ui/sync-progress";
+import type { BookmarkBundle } from "../src/core/format/schema";
+import type { PrivateBookmarkOperation } from "../src/core/shared/types";
 
 function formatLastSyncLabel(lastSuccessfulSyncAt: string | null): string {
   return lastSuccessfulSyncAt ? new Date(lastSuccessfulSyncAt).toLocaleString() : "Never synced";
 }
 
-async function handleRuntimeMessage(message: RuntimeMessage): Promise<unknown> {
+function describePrivateBookmarkMutation(bundle: BookmarkBundle, operation: PrivateBookmarkOperation): string {
+  switch (operation.type) {
+    case "create-folder":
+      return `Private bookmarks: created folder "${operation.title}".`;
+    case "create-bookmark":
+      return `Private bookmarks: created bookmark "${operation.title}".`;
+    case "update-bookmark": {
+      const existingNode = bundle.nodes[operation.nodeId];
+      const previousTitle = existingNode?.title ?? "bookmark item";
+      return `Private bookmarks: updated "${previousTitle}" to "${operation.title}".`;
+    }
+    case "rename-node": {
+      const existingNode = bundle.nodes[operation.nodeId];
+      const previousTitle = existingNode?.title ?? "bookmark item";
+      return `Private bookmarks: renamed "${previousTitle}" to "${operation.title}".`;
+    }
+    case "delete-node": {
+      const existingNode = bundle.nodes[operation.nodeId];
+      const title = existingNode?.title ?? "bookmark item";
+      return `Private bookmarks: deleted "${title}".`;
+    }
+    case "move-node": {
+      const existingNode = bundle.nodes[operation.nodeId];
+      const destinationNode = bundle.nodes[operation.destinationFolderId];
+      const nodeTitle = existingNode?.title ?? "bookmark item";
+      const destinationTitle = destinationNode?.title ?? "selected folder";
+      return `Private bookmarks: moved "${nodeTitle}" to "${destinationTitle}".`;
+    }
+  }
+}
+
+export async function handleRuntimeMessage(message: RuntimeMessage): Promise<unknown> {
   switch (message.type) {
     case "onesync:get-popup-state": {
       const config = await getConfig();
@@ -45,6 +86,38 @@ async function handleRuntimeMessage(message: RuntimeMessage): Promise<unknown> {
         getActivityLog()
       ]);
       return { config, syncState, activityLog };
+    }
+    case "onesync:get-private-bookmarks": {
+      const config = await getConfig();
+      const bundle = await loadPrivateManagerBundle(config);
+      return buildPrivateBookmarksViewState(bundle, getBookmarkStorageMode());
+    }
+    case "onesync:mutate-private-bookmarks": {
+      const config = await getConfig();
+      const mode = getBookmarkStorageMode();
+      const current = await loadPrivateManagerBundle(config);
+      const next = applyPrivateBookmarkOperation(current, message.payload.operation, config.deviceId);
+      try {
+        const saved = await savePrivateManagerBundle(config, next, mode);
+        await appendActivityLog({
+          level: "info",
+          message: describePrivateBookmarkMutation(current, message.payload.operation),
+          createdAt: new Date().toISOString()
+        });
+        return buildPrivateBookmarksViewState(saved, mode);
+      } catch (error) {
+        const messageText = error instanceof Error ? error.message : String(error);
+
+        if (/browser bookmarks not updated/i.test(messageText)) {
+          await appendActivityLog({
+            level: "error",
+            message: messageText,
+            createdAt: new Date().toISOString()
+          });
+        }
+
+        throw error;
+      }
     }
     case "onesync:save-config": {
       await setConfig(message.payload);
@@ -79,17 +152,17 @@ async function handleRuntimeMessage(message: RuntimeMessage): Promise<unknown> {
     }
     case "onesync:export-bundle": {
       const config = await getConfig();
-      const localBundle = await listLocalBookmarks(config);
+      const localBundle = await loadSharedBookmarkBundle(config);
       const encodedBundle = await encodeBundle(localBundle);
       return JSON.stringify(encodedBundle, null, 2);
     }
     case "onesync:import-bundle": {
       const config = await getConfig();
-      const previousBundle = await listLocalBookmarks(config);
+      const previousBundle = await loadSharedBookmarkBundle(config);
       await setRecoverySnapshot(previousBundle);
 
       const decodedBundle = await decodeBundle(JSON.parse(message.payload.encodedBundleJson));
-      await applyBundleToBookmarks(decodedBundle);
+      await applySharedBundleLocally(decodedBundle, getBookmarkStorageMode());
       await setBaseSnapshot(decodedBundle);
       await setSyncState({
         lastSyncAt: new Date().toISOString(),

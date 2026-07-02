@@ -1,4 +1,4 @@
-import browser from "webextension-polyfill";
+import { browser } from "wxt/browser";
 import type { RuntimeMessage } from "../../core/shared/types";
 import { requestSyncTrigger } from "./sync-trigger";
 

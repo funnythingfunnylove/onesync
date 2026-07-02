@@ -28,7 +28,14 @@ if (probe.error || probe.status !== 0) {
 
 const result = spawnSync(
   "xcrun",
-  ["safari-web-extension-packager", safariOutputDir, "--no-open"],
+  [
+    "safari-web-extension-packager",
+    safariOutputDir,
+    "--macos-only",
+    "--force",
+    "--no-open",
+    "--no-prompt"
+  ],
   {
     stdio: "inherit",
     shell: process.platform === "win32"

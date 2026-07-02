@@ -1,4 +1,4 @@
-import browser from "webextension-polyfill";
+import { browser } from "wxt/browser";
 import type { SyncIntervalMinutes } from "../shared/types";
 export {
   getSyncConfigReadyError,

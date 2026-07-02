@@ -8,6 +8,18 @@ type LatestBundleResponse = {
   bundle: EncodedBookmarkBundle | null;
 };
 
+type LatestBundleMetadata = {
+  revision?: string;
+  deviceId?: string;
+  updatedAt?: string;
+};
+
+type DeviceStateMetadata = {
+  deviceId?: string;
+  lastRevision?: string;
+  updatedAt?: string;
+};
+
 type WebDavConnectionCheckResult = {
   status: "ready" | "needs-initial-sync";
   message: string;
@@ -43,6 +55,58 @@ function encodeBasicAuth(username: string, password: string): string {
 
 function toUrl(pathname: string, baseUrl: string): URL {
   return new URL(pathname.replace(/^\//u, ""), `${baseUrl.replace(/\/+$/u, "")}/`);
+}
+
+function parseWebDavHrefList(xml: string, baseUrl: URL): URL[] {
+  const hrefMatches = xml.matchAll(/<[^>]*href[^>]*>(.*?)<\/[^>]*href>/giu);
+  const urls: URL[] = [];
+
+  for (const match of hrefMatches) {
+    const href = match[1]?.trim();
+
+    if (!href) {
+      continue;
+    }
+
+    urls.push(new URL(href, baseUrl));
+  }
+
+  return urls;
+}
+
+function parseIsoTimestamp(value: string | undefined): number | null {
+  if (!value) {
+    return null;
+  }
+
+  const timestamp = Date.parse(value);
+  return Number.isNaN(timestamp) ? null : timestamp;
+}
+
+function isNewerRevisionThanLatest(
+  latestMeta: LatestBundleMetadata | null,
+  deviceState: DeviceStateMetadata
+): boolean {
+  if (!deviceState.lastRevision) {
+    return false;
+  }
+
+  if (!latestMeta?.revision) {
+    return true;
+  }
+
+  const deviceUpdatedAt = parseIsoTimestamp(deviceState.updatedAt);
+  const latestUpdatedAt = parseIsoTimestamp(latestMeta.updatedAt);
+
+  if (deviceUpdatedAt === null) {
+    return false;
+  }
+
+  if (latestUpdatedAt === null) {
+    return deviceState.lastRevision !== latestMeta.revision;
+  }
+
+  return deviceUpdatedAt > latestUpdatedAt && deviceState.lastRevision !== latestMeta.revision;
 }
 
 async function fetchWebDav(url: URL, init: RequestInit | undefined, operation: string): Promise<Response> {
@@ -246,33 +310,99 @@ export function createWebDavClient(config: SyncConfig) {
       const latestMetaUrl = toUrl(paths.latestMeta, config.webdavUrl);
       const latestBundleUrl = toUrl(paths.latestBundle, config.webdavUrl);
       const metaResponse = await fetchWebDav(latestMetaUrl, { headers: baseHeaders }, "fetch latest metadata");
+      let latestMetadata: LatestBundleMetadata | null = null;
+      let latestMetadataEtag: string | null = null;
+      let latestBundle: EncodedBookmarkBundle | null = null;
+      let latestBundleEtag: string | null = null;
 
-      if (metaResponse.status === 404) {
-        return { bundleEtag: null, metadataEtag: null, bundle: null };
+      if (metaResponse.status !== 404) {
+        if (!metaResponse.ok) {
+          throw new Error(`Failed to fetch WebDAV metadata: ${metaResponse.status}`);
+        }
+
+        latestMetadata = (await metaResponse.json()) as LatestBundleMetadata;
+        latestMetadataEtag = metaResponse.headers.get("etag");
+
+        const bundleResponse = await fetchWebDav(latestBundleUrl, { headers: baseHeaders }, "fetch latest bundle");
+
+        if (bundleResponse.status !== 404) {
+          if (!bundleResponse.ok) {
+            throw new Error(`Failed to fetch WebDAV bundle: ${bundleResponse.status}`);
+          }
+
+          latestBundleEtag = bundleResponse.headers.get("etag");
+          latestBundle = (await bundleResponse.json()) as EncodedBookmarkBundle;
+        }
       }
 
-      if (!metaResponse.ok) {
-        throw new Error(`Failed to fetch WebDAV metadata: ${metaResponse.status}`);
-      }
+      try {
+        const devicesDirectoryUrl = toUrl(`${paths.baseDirectory}/devices`, config.webdavUrl);
+        const devicesResponse = await fetchWebDav(
+          devicesDirectoryUrl,
+          {
+            method: "PROPFIND",
+            headers: {
+              ...baseHeaders,
+              Depth: "1"
+            }
+          },
+          "fetch device metadata listing"
+        );
 
-      const bundleResponse = await fetchWebDav(latestBundleUrl, { headers: baseHeaders }, "fetch latest bundle");
+        if (devicesResponse.ok) {
+          const deviceUrls = parseWebDavHrefList(await devicesResponse.text(), devicesDirectoryUrl)
+            .filter((url) => url.pathname !== devicesDirectoryUrl.pathname)
+            .filter((url) => url.pathname.endsWith(".json"));
 
-      if (bundleResponse.status === 404) {
-        return {
-          bundleEtag: null,
-          metadataEtag: metaResponse.headers.get("etag"),
-          bundle: null
-        };
-      }
+          let newestDeviceState: DeviceStateMetadata | null = null;
+          let newestDeviceTimestamp: number | null = null;
 
-      if (!bundleResponse.ok) {
-        throw new Error(`Failed to fetch WebDAV bundle: ${bundleResponse.status}`);
+          for (const deviceUrl of deviceUrls) {
+            const deviceResponse = await fetchWebDav(deviceUrl, { headers: baseHeaders }, "fetch device metadata");
+
+            if (!deviceResponse.ok) {
+              continue;
+            }
+
+            const deviceState = (await deviceResponse.json()) as DeviceStateMetadata;
+            const deviceTimestamp = parseIsoTimestamp(deviceState.updatedAt);
+
+            if (deviceTimestamp === null) {
+              continue;
+            }
+
+            if (newestDeviceTimestamp === null || deviceTimestamp > newestDeviceTimestamp) {
+              newestDeviceTimestamp = deviceTimestamp;
+              newestDeviceState = deviceState;
+            }
+          }
+
+          if (newestDeviceState && isNewerRevisionThanLatest(latestMetadata, newestDeviceState)) {
+            const historyBundlePath = buildRemotePaths(
+              config.basePath,
+              newestDeviceState.lastRevision!,
+              config.deviceId
+            ).historyBundle;
+            const historyBundleUrl = toUrl(historyBundlePath, config.webdavUrl);
+            const historyBundleResponse = await fetchWebDav(
+              historyBundleUrl,
+              { headers: baseHeaders },
+              "fetch history bundle"
+            );
+
+            if (historyBundleResponse.ok) {
+              latestBundle = (await historyBundleResponse.json()) as EncodedBookmarkBundle;
+            }
+          }
+        }
+      } catch {
+        // Device metadata and history probing are opportunistic compatibility checks.
       }
 
       return {
-        bundleEtag: bundleResponse.headers.get("etag"),
-        metadataEtag: metaResponse.headers.get("etag"),
-        bundle: (await bundleResponse.json()) as EncodedBookmarkBundle
+        bundleEtag: latestBundleEtag,
+        metadataEtag: latestMetadataEtag,
+        bundle: latestBundle
       };
     },
 

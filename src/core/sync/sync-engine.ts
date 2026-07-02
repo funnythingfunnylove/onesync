@@ -1,4 +1,8 @@
-import { applyBundleToBookmarks, listLocalBookmarks } from "../browser/bookmarks";
+import {
+  applySharedBundleLocally,
+  getBookmarkStorageMode,
+  loadSharedBookmarkBundle
+} from "../browser/bookmarks";
 import { getBaseSnapshot, setBaseSnapshot, setRecoverySnapshot } from "../browser/storage";
 import { decodeBundle } from "../format/decode";
 import { encodeBundle } from "../format/encode";
@@ -35,6 +39,10 @@ function hasChanges(changeSet: {
     changeSet.updatedNodeIds.length > 0 ||
     changeSet.deletedNodeIds.length > 0
   );
+}
+
+function hasMeaningfulChangesWithoutBase(bundle: BookmarkBundle): boolean {
+  return countBookmarkItems(bundle) > 0 || bundle.tombstones.length > 0;
 }
 
 function getProgressBucket(progress: SyncProgress): number {
@@ -127,7 +135,7 @@ export async function syncOnce(config: SyncConfig): Promise<{
       processed: 0,
       total: 0
     };
-    const localBundle = await listLocalBookmarks(validatedConfig, {
+    const localBundle = await loadSharedBookmarkBundle(validatedConfig, {
       onProgress: async (progress) => {
         localBookmarkProgress = progress;
         await writeProgress({
@@ -207,8 +215,12 @@ export async function syncOnce(config: SyncConfig): Promise<{
     );
     const localChanges = diffBundles(baseSnapshot, localBundle);
     const remoteChanges = diffBundles(baseSnapshot, remoteBundle);
-    const hasLocalChanges = hasChanges(localChanges);
-    const hasRemoteChanges = hasChanges(remoteChanges);
+    const hasLocalChanges = baseSnapshot
+      ? hasChanges(localChanges)
+      : hasMeaningfulChangesWithoutBase(localBundle);
+    const hasRemoteChanges = baseSnapshot
+      ? hasChanges(remoteChanges)
+      : hasMeaningfulChangesWithoutBase(remoteBundle);
 
     if (!hasLocalChanges && !hasRemoteChanges) {
       await setBaseSnapshot(remoteBundle);
@@ -244,7 +256,7 @@ export async function syncOnce(config: SyncConfig): Promise<{
         message: "Applying remote bookmark bundle locally.",
         createdAt: new Date().toISOString()
       });
-      await applyBundleToBookmarks(remoteBundle, {
+      await applySharedBundleLocally(remoteBundle, getBookmarkStorageMode(), {
         onProgress: async (progress) => {
           await writeProgress({
             phase: "applying-remote",
@@ -290,7 +302,7 @@ export async function syncOnce(config: SyncConfig): Promise<{
       message: "Applying merged bookmark bundle locally.",
       createdAt: new Date().toISOString()
     });
-    await applyBundleToBookmarks(mergedBundle, {
+    await applySharedBundleLocally(mergedBundle, getBookmarkStorageMode(), {
       onProgress: async (progress) => {
         await writeProgress({
           phase: "applying-remote",

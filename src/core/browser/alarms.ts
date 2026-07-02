@@ -1,7 +1,13 @@
-import browser from "webextension-polyfill";
+import { browser } from "wxt/browser";
 
-export async function getAlarm(name: string): Promise<browser.Alarms.Alarm | undefined> {
-  return browser.alarms.get(name);
+type NativeAlarm = {
+  name: string;
+  scheduledTime?: number;
+  periodInMinutes?: number;
+};
+
+export async function getAlarm(name: string): Promise<NativeAlarm | undefined> {
+  return (await browser.alarms.get(name)) as NativeAlarm | undefined;
 }
 
 export async function createPeriodicAlarm(name: string, periodInMinutes: number): Promise<void> {

@@ -54,6 +54,59 @@ const localBundle: BookmarkBundle = {
   }
 };
 
+const emptyPrivateLocalBundle: BookmarkBundle = {
+  kind: "onesync.bookmarks",
+  schemaVersion: 1,
+  revision: "2026-07-01T08:00:00.000Z#device-safari#snapshot",
+  deviceId: "device-safari",
+  generatedAt: "2026-07-01T08:00:00.000Z",
+  roots: {
+    toolbar: "onesync.synthetic.toolbar",
+    menu: "onesync.synthetic.menu",
+    mobile: "onesync.synthetic.mobile",
+    unfiled: "onesync.synthetic.unfiled"
+  },
+  nodes: {
+    "onesync.synthetic.toolbar": {
+      id: "onesync.synthetic.toolbar",
+      type: "folder",
+      title: "Bookmarks Bar",
+      children: [],
+      addedAt: "2026-07-01T08:00:00.000Z",
+      updatedAt: "2026-07-01T08:00:00.000Z"
+    },
+    "onesync.synthetic.menu": {
+      id: "onesync.synthetic.menu",
+      type: "folder",
+      title: "Bookmarks Menu",
+      children: [],
+      addedAt: "2026-07-01T08:00:00.000Z",
+      updatedAt: "2026-07-01T08:00:00.000Z"
+    },
+    "onesync.synthetic.mobile": {
+      id: "onesync.synthetic.mobile",
+      type: "folder",
+      title: "Mobile Bookmarks",
+      children: [],
+      addedAt: "2026-07-01T08:00:00.000Z",
+      updatedAt: "2026-07-01T08:00:00.000Z"
+    },
+    "onesync.synthetic.unfiled": {
+      id: "onesync.synthetic.unfiled",
+      type: "folder",
+      title: "Unfiled Bookmarks",
+      children: [],
+      addedAt: "2026-07-01T08:00:00.000Z",
+      updatedAt: "2026-07-01T08:00:00.000Z"
+    }
+  },
+  tombstones: [],
+  meta: {
+    client: "onesync",
+    clientVersion: "0.1.0"
+  }
+};
+
 const encodedBundle: EncodedBookmarkBundle = {
   kind: "onesync.bundle",
   bundleVersion: 1,
@@ -71,11 +124,13 @@ const {
   setBaseSnapshot,
   setRecoverySnapshot,
   applyBundleToBookmarks,
+  applySharedBundleLocally,
+  getBookmarkStorageMode,
   setSyncState,
   appendActivityLog,
   encodeBundle,
   decodeBundle,
-  listLocalBookmarks,
+  loadSharedBookmarkBundle,
   getBaseSnapshot
 } = vi.hoisted(() => ({
   putLatestBundle: vi.fn(),
@@ -83,17 +138,21 @@ const {
   setBaseSnapshot: vi.fn(),
   setRecoverySnapshot: vi.fn(),
   applyBundleToBookmarks: vi.fn(),
+  applySharedBundleLocally: vi.fn(),
+  getBookmarkStorageMode: vi.fn(() => "native"),
   setSyncState: vi.fn(),
   appendActivityLog: vi.fn(),
   encodeBundle: vi.fn(),
   decodeBundle: vi.fn(),
-  listLocalBookmarks: vi.fn(),
+  loadSharedBookmarkBundle: vi.fn(),
   getBaseSnapshot: vi.fn()
 }));
 
 vi.mock("../../src/core/browser/bookmarks", () => ({
   applyBundleToBookmarks,
-  listLocalBookmarks
+  applySharedBundleLocally,
+  getBookmarkStorageMode,
+  loadSharedBookmarkBundle
 }));
 
 vi.mock("../../src/core/browser/storage", () => ({
@@ -151,8 +210,9 @@ beforeEach(() => {
     return encodedBundle;
   });
   decodeBundle.mockResolvedValue(localBundle);
-  listLocalBookmarks.mockResolvedValue(localBundle);
+  loadSharedBookmarkBundle.mockResolvedValue(localBundle);
   getBaseSnapshot.mockResolvedValue(null);
+  getBookmarkStorageMode.mockReturnValue("native");
   fetchLatestBundle.mockResolvedValue({ bundleEtag: null, metadataEtag: null, bundle: null });
 });
 
@@ -171,13 +231,13 @@ describe("syncOnce", () => {
       })
     ).rejects.toThrow(/password/i);
 
-    expect(listLocalBookmarks).not.toHaveBeenCalled();
+    expect(loadSharedBookmarkBundle).not.toHaveBeenCalled();
     expect(fetchLatestBundle).not.toHaveBeenCalled();
     expect(putLatestBundle).not.toHaveBeenCalled();
   });
 
   it("uploads the local bundle when no remote bundle exists", async () => {
-    listLocalBookmarks.mockImplementationOnce(async (_config, options) => {
+    loadSharedBookmarkBundle.mockImplementationOnce(async (_config, options) => {
       await options?.onProgress?.({
         processed: 1,
         total: 1
@@ -237,8 +297,51 @@ describe("syncOnce", () => {
     );
   });
 
+  it("uses the shared bundle loader so saved native fallback edits are uploaded", async () => {
+    const fallbackEditedBundle = {
+      ...localBundle,
+      revision: "2026-07-01T02:00:00.000Z#device-1#snapshot",
+      generatedAt: "2026-07-01T02:00:00.000Z",
+      nodes: {
+        ...localBundle.nodes,
+        "bookmark-1": {
+          ...localBundle.nodes["bookmark-1"],
+          title: "Manager Edited Title",
+          updatedAt: "2026-07-01T02:00:00.000Z"
+        }
+      }
+    } satisfies BookmarkBundle;
+
+    loadSharedBookmarkBundle.mockResolvedValueOnce(fallbackEditedBundle);
+
+    const result = await syncOnce({
+      deviceId: "device-1",
+      webdavUrl: "https://dav.example.com",
+      username: "alice",
+      password: "secret",
+      basePath: "/onesync",
+      intervalMinutes: 15,
+      scheduledSyncEnabled: true,
+      allowInsecureHttp: false
+    });
+
+    expect(result.status).toBe("uploaded");
+    expect(encodeBundle).toHaveBeenCalledWith(fallbackEditedBundle, expect.any(Object));
+    expect(setRecoverySnapshot).toHaveBeenCalledWith(fallbackEditedBundle);
+    expect(setBaseSnapshot).toHaveBeenCalledWith(fallbackEditedBundle);
+    expect(putLatestBundle).toHaveBeenCalledWith(
+      encodedBundle,
+      fallbackEditedBundle.revision,
+      fallbackEditedBundle.deviceId,
+      null,
+      expect.objectContaining({
+        onProgress: expect.any(Function)
+      })
+    );
+  });
+
   it("throttles progress state writes during large local scans while keeping the final count accurate", async () => {
-    listLocalBookmarks.mockImplementationOnce(async (_config, options) => {
+    loadSharedBookmarkBundle.mockImplementationOnce(async (_config, options) => {
       for (let processed = 1; processed <= 250; processed += 1) {
         await options?.onProgress?.({
           processed,
@@ -458,7 +561,8 @@ describe("syncOnce", () => {
     });
 
     expect(result.status).toBe("merged");
-    expect(applyBundleToBookmarks).toHaveBeenCalledTimes(1);
+    expect(applySharedBundleLocally).toHaveBeenCalledTimes(1);
+    expect(applySharedBundleLocally).toHaveBeenCalledWith(expect.any(Object), "native", expect.any(Object));
     expect(setBaseSnapshot).toHaveBeenCalledTimes(1);
     expect(putLatestBundle).toHaveBeenCalledTimes(1);
     expect(putLatestBundle).toHaveBeenCalledWith(
@@ -510,7 +614,7 @@ describe("syncOnce", () => {
       bundle: encodedBundle
     });
     decodeBundle.mockResolvedValueOnce(remoteBundle);
-    applyBundleToBookmarks.mockImplementationOnce(async (_bundle, options) => {
+    applySharedBundleLocally.mockImplementationOnce(async (_bundle, _mode, options) => {
       await options?.onProgress?.({
         processed: 1,
         total: 1
@@ -530,7 +634,7 @@ describe("syncOnce", () => {
 
     expect(result.status).toBe("downloaded");
     expect(result.revision).toBe(remoteBundle.revision);
-    expect(applyBundleToBookmarks).toHaveBeenCalledWith(remoteBundle, expect.any(Object));
+    expect(applySharedBundleLocally).toHaveBeenCalledWith(remoteBundle, "native", expect.any(Object));
     expect(setBaseSnapshot).toHaveBeenCalledWith(remoteBundle);
     expect(putLatestBundle).not.toHaveBeenCalled();
     expect(setSyncState).toHaveBeenCalledWith(
@@ -553,6 +657,96 @@ describe("syncOnce", () => {
       expect.objectContaining({
         level: "info",
         message: "Applied remote bookmark bundle locally."
+      })
+    );
+  });
+
+  it("downloads the remote bundle when Safari starts from an empty private local carrier and no base snapshot exists", async () => {
+    const remoteBundle = structuredClone(localBundle);
+
+    loadSharedBookmarkBundle.mockResolvedValueOnce(emptyPrivateLocalBundle);
+    fetchLatestBundle.mockResolvedValue({
+      bundleEtag: "\"bundle-etag-remote\"",
+      metadataEtag: "\"meta-etag-remote\"",
+      bundle: encodedBundle
+    });
+    decodeBundle.mockResolvedValueOnce(remoteBundle);
+    applySharedBundleLocally.mockImplementationOnce(async (_bundle, _mode, options) => {
+      await options?.onProgress?.({
+        processed: 1,
+        total: 1
+      });
+    });
+
+    const result = await syncOnce({
+      deviceId: "device-safari",
+      webdavUrl: "https://dav.example.com",
+      username: "alice",
+      password: "secret",
+      basePath: "/onesync",
+      intervalMinutes: 15,
+      scheduledSyncEnabled: true,
+      allowInsecureHttp: false
+    });
+
+    expect(result.status).toBe("downloaded");
+    expect(applySharedBundleLocally).toHaveBeenCalledWith(remoteBundle, "native", expect.any(Object));
+    expect(setBaseSnapshot).toHaveBeenCalledWith(remoteBundle);
+    expect(putLatestBundle).not.toHaveBeenCalled();
+  });
+
+  it("surfaces shared-bundle apply failures during remote downloads", async () => {
+    const baseBundle = structuredClone(localBundle);
+    const remoteBundle = {
+      ...structuredClone(localBundle),
+      revision: "2026-06-30T12:02:00.000Z#device-2#1",
+      deviceId: "device-2",
+      nodes: {
+        ...localBundle.nodes,
+        "bookmark-1": {
+          ...localBundle.nodes["bookmark-1"],
+          title: "Remote Only Title",
+          updatedAt: "2026-06-30T12:02:00.000Z"
+        }
+      }
+    } satisfies BookmarkBundle;
+    const applyFailure = new Error(
+      "Shared data saved, browser bookmarks not updated: Failed to apply bookmark bundle locally: Native bookmarks write blocked"
+    );
+
+    getBaseSnapshot.mockResolvedValue(baseBundle);
+    fetchLatestBundle.mockResolvedValue({
+      bundleEtag: "\"bundle-etag-2\"",
+      metadataEtag: "\"meta-etag-2\"",
+      bundle: encodedBundle
+    });
+    decodeBundle.mockResolvedValueOnce(remoteBundle);
+    applySharedBundleLocally.mockRejectedValueOnce(applyFailure);
+
+    await expect(
+      syncOnce({
+        deviceId: "device-1",
+        webdavUrl: "https://dav.example.com",
+        username: "alice",
+        password: "secret",
+        basePath: "/onesync",
+        intervalMinutes: 15,
+        scheduledSyncEnabled: true,
+        allowInsecureHttp: false
+      })
+    ).rejects.toThrow(applyFailure.message);
+
+    expect(applySharedBundleLocally).toHaveBeenCalledWith(remoteBundle, "native", expect.any(Object));
+    expect(setSyncState).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "error",
+        lastError: applyFailure.message
+      })
+    );
+    expect(appendActivityLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        level: "error",
+        message: applyFailure.message
       })
     );
   });
@@ -581,7 +775,7 @@ describe("syncOnce", () => {
 
     expect(result.status).toBe("idle");
     expect(result.revision).toBe(baseBundle.revision);
-    expect(applyBundleToBookmarks).not.toHaveBeenCalled();
+    expect(applySharedBundleLocally).not.toHaveBeenCalled();
     expect(putLatestBundle).not.toHaveBeenCalled();
   });
 });
