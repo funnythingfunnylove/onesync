@@ -1,6 +1,7 @@
 import { browser } from "wxt/browser";
 import type { BookmarkBundle, BookmarkNode } from "../format/schema";
 import { normalizeBundle } from "../format/schema";
+import { normalizePrivateBookmarkTags, type PrivateBookmarkTag } from "../private-bookmarks/tags";
 import { validatePrivateBookmarkUrl } from "../private-bookmarks/validation";
 import type { SyncConfig } from "../state/config";
 import { clearStoredBundle, loadStoredBundle, saveStoredBundle } from "./bundle-storage";
@@ -37,6 +38,7 @@ export const BOOKMARKS_API_UNAVAILABLE_MESSAGE =
 const SYNTHETIC_ROOT_PREFIX = "onesync.synthetic";
 const PRIVATE_BOOKMARKS_KEY = "onesync.privateBookmarks";
 const PRIVATE_BOOKMARKS_NATIVE_FALLBACK_KEY = "onesync.privateBookmarksNativeFallback";
+const NATIVE_BOOKMARK_TAGS_KEY = "onesync.nativeBookmarkTags";
 const SYNTHETIC_ROOT_TITLES: Record<SemanticRoot, string> = {
   toolbar: "Bookmarks Bar",
   menu: "Bookmarks Menu",
@@ -50,6 +52,7 @@ const MOBILE_ROOT_PATTERNS = [/mobile/iu];
 const UNFILED_ROOT_PATTERNS = [/unfiled/iu, /other\s+bookmarks/iu, /other\s+favorites/iu];
 
 type BookmarksApi = typeof browser.bookmarks;
+type NativeBookmarkTagIndex = Record<string, PrivateBookmarkTag[]>;
 
 function hasBookmarksApi(): boolean {
   const bookmarksApi = browser.bookmarks;
@@ -152,6 +155,98 @@ function assertBundleBookmarkUrlsAreSupported(bundle: BookmarkBundle): void {
     if (!validatedUrl.ok) {
       throw new Error(`${validatedUrl.message} (bookmark "${node.title}" / ${node.id})`);
     }
+  }
+}
+
+function normalizeBookmarkTagUrl(rawUrl: string): string {
+  try {
+    return new URL(rawUrl).href;
+  } catch {
+    return rawUrl.trim();
+  }
+}
+
+function getNativeBookmarkTagKey(title: string, url: string): string {
+  return `${title.trim()}\n${normalizeBookmarkTagUrl(url)}`;
+}
+
+function buildNativeBookmarkTagIndex(bundle: BookmarkBundle): NativeBookmarkTagIndex {
+  const tagIndex: NativeBookmarkTagIndex = {};
+
+  for (const node of Object.values(bundle.nodes)) {
+    if (node.type !== "bookmark") {
+      continue;
+    }
+
+    const tags = normalizePrivateBookmarkTags(node.tags);
+
+    if (tags.length > 0) {
+      tagIndex[getNativeBookmarkTagKey(node.title, node.url)] = tags;
+    }
+  }
+
+  return tagIndex;
+}
+
+async function loadNativeBookmarkTagIndex(): Promise<NativeBookmarkTagIndex> {
+  const storageArea = browser.storage?.local;
+
+  if (!storageArea || typeof storageArea.get !== "function") {
+    return {};
+  }
+
+  const storedValue = await storageArea.get(NATIVE_BOOKMARK_TAGS_KEY);
+  const value = storedValue[NATIVE_BOOKMARK_TAGS_KEY];
+
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+
+  const tagIndex: NativeBookmarkTagIndex = {};
+
+  for (const [key, rawTags] of Object.entries(value as Record<string, unknown>)) {
+    if (!Array.isArray(rawTags)) {
+      continue;
+    }
+
+    const tags = normalizePrivateBookmarkTags(rawTags as Array<string | Partial<PrivateBookmarkTag>>);
+
+    if (tags.length > 0) {
+      tagIndex[key] = tags;
+    }
+  }
+
+  return tagIndex;
+}
+
+async function saveNativeBookmarkTagIndex(bundle: BookmarkBundle): Promise<void> {
+  const storageArea = browser.storage?.local;
+
+  if (!storageArea || typeof storageArea.set !== "function") {
+    return;
+  }
+
+  await storageArea.set({
+    [NATIVE_BOOKMARK_TAGS_KEY]: buildNativeBookmarkTagIndex(bundle)
+  });
+}
+
+function applyNativeBookmarkTagIndex(nodes: Record<string, BookmarkNode>, tagIndex: NativeBookmarkTagIndex): void {
+  for (const [nodeId, node] of Object.entries(nodes)) {
+    if (node.type !== "bookmark") {
+      continue;
+    }
+
+    const tags = tagIndex[getNativeBookmarkTagKey(node.title, node.url)] ?? [];
+
+    if (tags.length === 0) {
+      continue;
+    }
+
+    nodes[nodeId] = {
+      ...node,
+      tags
+    };
   }
 }
 
@@ -455,7 +550,7 @@ function createEmptyPrivateBundle(config: SyncConfig): BookmarkBundle {
     tombstones: [],
     meta: {
       client: "onesync",
-      clientVersion: "0.1.3"
+      clientVersion: "0.2.0"
     }
   });
 }
@@ -603,6 +698,9 @@ export async function listLocalBookmarks(
     const menuId = await projectSemanticRoot("menu", nativeRoots.menu);
     const mobileId = await projectSemanticRoot("mobile", nativeRoots.mobile);
     const unfiledId = await projectSemanticRoot("unfiled", nativeRoots.unfiled);
+    const nativeBookmarkTagIndex = await loadNativeBookmarkTagIndex();
+
+    applyNativeBookmarkTagIndex(nodes, nativeBookmarkTagIndex);
 
     return normalizeBundle({
       kind: "onesync.bookmarks",
@@ -620,7 +718,7 @@ export async function listLocalBookmarks(
       tombstones: [],
       meta: {
         client: "onesync",
-        clientVersion: "0.1.3"
+        clientVersion: "0.2.0"
       }
     });
   } catch (error) {
@@ -708,6 +806,7 @@ export async function applyBundleToBookmarks(
       }
     }
 
+    await saveNativeBookmarkTagIndex(bundle);
     await clearSavedSharedBundleFallback();
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

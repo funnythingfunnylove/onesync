@@ -2,6 +2,8 @@ export type BookmarkUrlValidationResult =
   | { ok: true; value: string }
   | { ok: false; message: string };
 
+const UNSUPPORTED_BOOKMARK_PROTOCOLS = new Set(["javascript:", "data:", "vbscript:"]);
+
 export function validatePrivateBookmarkUrl(rawUrl: string): BookmarkUrlValidationResult {
   const trimmed = rawUrl.trim();
 
@@ -23,10 +25,10 @@ export function validatePrivateBookmarkUrl(rawUrl: string): BookmarkUrlValidatio
     };
   }
 
-  if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
+  if (UNSUPPORTED_BOOKMARK_PROTOCOLS.has(parsedUrl.protocol.toLowerCase())) {
     return {
       ok: false,
-      message: "Bookmark URL must start with http:// or https://."
+      message: "Bookmark URL uses an unsupported scheme."
     };
   }
 

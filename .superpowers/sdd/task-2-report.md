@@ -1,45 +1,100 @@
-# Task 2 Report
+## Task 2 Report
 
-## Outcome
-Rebuilt the popup as a compact companion sheet while keeping sync behavior, bookmark storage, private bookmark mutation, WebDAV handling, and browser support semantics unchanged.
+### Status
 
-## What Changed
-- Reworked `/Users/fl/proj/onesync/entrypoints/popup/main.ts` so the popup now renders in the requested order: header, state, optional progress card, facts, error notice, and actions.
-- Removed the normal-state explanatory copy and kept the surface focused on state, progress, facts, error, and actions.
-- Preserved the action labels `Sync` and `Settings`.
-- Rewrote `/Users/fl/proj/onesync/entrypoints/popup/popup.css` to use the warm monochrome palette and a flatter editorial treatment:
-  - canvas `#FBFBFA`
-  - surface `#FFFFFF`
-  - border `#EAEAEA`
-  - text `#2F3437`
-  - muted text `#787774`
-- Applied the semantic feedback colors for popup states and the error notice without introducing gradients, heavy shadows, or extra explanatory copy.
-- Kept keyboard focus visibility, disabled-state clarity, and compact fact/progress layouts intact.
+DONE
 
-## Verification
-- Ran `pnpm exec tsc --noEmit`
+### Scope
 
-## Notes
-- No concerns at the moment.
+- Implemented Task 2 in `/Users/fl/proj/onesync/entrypoints/options/main.ts`
+- Kept repo edits scoped to the task-owned file for the committed change
+- Updated the temporary QA harness in `/tmp/onesync-options-qa/check-options-ui.cjs` for verification only; this was not part of the repo commit
 
-## Review Fix Follow-up
-- Restored the popup state summary so non-running states keep the background-provided `statusLabel` semantics instead of collapsing into a local `Standing by` label.
-- Kept the primary action dark on hover and removed the custom light hover treatment that reduced contrast.
-- Normalized the popup styling back to the approved warm monochrome and semantic palette, including the error border treatment.
-- Removed the duplicate version row from the facts grid to keep the popup more compact.
-- Re-ran `pnpm exec tsc --noEmit` after the fix.
+### What Changed
 
-## Re-review Fix
-- Removed the popup's local state-classification helper so the state card now uses the background-provided `statusLabel` directly and no longer invents `Ready`/`healthy` semantics for non-running states.
-- Gated the progress card on `viewModel.isRunning` so progress only appears during an active sync, not just when a progress label is present.
-- Removed the negative letter spacing from popup headings to match the shared typography rule.
+1. Removed bookmark-manager tab and collapse state from the options entrypoint.
+   - Deleted local `privateTab` state.
+   - Deleted local collapsed-folder tracking.
+   - Removed the old tree-only helper functions that supported collapse behavior.
 
-## Verification
-- `pnpm exec tsc --noEmit` passed after the re-review fix.
+2. Switched the bookmark manager render path to the new folder-scoped view-model contract.
+   - `buildPrivateBookmarkManagerViewModel(...)` is now called with only `selectedFolderId` and `selectedNodeId`.
+   - The content header now derives from a single selected folder workspace instead of folder/tree modes.
 
-## Final Task 2 Fix
-- Kept the primary CTA label fixed at `Sync` in all popup states and removed the runtime button text swap to `Syncing...` / `Starting...`.
-- Tightened the popup uppercase labels by removing the remaining positive letter spacing so the typography stays closer to the shared rule.
+3. Rebuilt visible-row rendering around one shared layout for folders and bookmarks.
+   - `renderPrivateVisibleNodes(...)` no longer accepts tab state.
+   - Rows now use `childCount` for folder metadata.
+   - Bookmark rows keep direct URL links.
+   - Inline edit state continues to expose `Save`, `Cancel`, and `Delete`.
 
-## Verification
-- `pnpm exec tsc --noEmit` passed after the final fix.
+4. Recomposed the bookmark page around a unified workspace.
+   - Kept the left folder rail.
+   - Kept the right-side toolbar with search and actions.
+   - Removed the private tab strip and `data-private-tab` usage.
+   - Preserved current-folder summary and move controls.
+
+5. Simplified bookmark-manager interactions.
+   - Folder clicks select the active folder.
+   - Row clicks select items and promote folders to the active folder context.
+   - Edit, cancel, delete, create, and move flows still work with the simplified event handling.
+
+### Verification
+
+Focused verification:
+
+- `pnpm test -- --run tests/ui/options-view-model.test.ts`
+  - Result: passed, though the current script invocation resolved to the full Vitest suite and all tests passed.
+- `pnpm exec tsc --noEmit`
+  - Result: passed
+
+Broader verification before commit:
+
+- `pnpm test`
+  - Result: 20 test files passed, 121 tests passed
+- `pnpm build`
+  - Result: WXT chrome build succeeded
+
+Rendered QA:
+
+- Served `/tmp/onesync-options-qa` with `python3 -m http.server 4321 -d /tmp/onesync-options-qa`
+- Ran `node /tmp/onesync-options-qa/check-options-ui.cjs`
+- Result:
+  - workspace page excludes bookmark-manager content
+  - bookmark-manager page excludes legacy `Folders` and `Tree` copy
+  - search field is present
+  - `Create folder` and `Create bookmark` actions are present
+  - no console warnings or errors were captured
+
+### Commit
+
+- `feat: redesign bookmark manager workspace`
+
+### Self-Review
+
+- The implementation stays inside the task-owned repo file.
+- The event handling is materially simpler than the previous tab/tree model and now matches the Task 1 contract.
+- The markup is ready for Task 3 CSS follow-up without keeping dead tab semantics alive.
+- No additional code changes were needed outside the task scope to make the Task 2 behavior verify cleanly.
+
+---
+
+## Task 2 Review Fixes
+
+### Findings Addressed
+
+1. The bookmark manager header now renders the view-model `modeHint` instead of the old generic copy.
+2. Inline edit validation now preserves unsaved title and URL drafts across validation-error rerenders.
+3. Inactive workspace-page buttons no longer emit `aria-current="false"`.
+
+### Implementation Notes
+
+- Added a small in-memory draft cache in `/Users/fl/proj/onesync/entrypoints/options/main.ts` keyed by editing node id so invalid submissions rerender with the user's typed values still present.
+- Cleared saved drafts when edit mode is canceled or a rename/update succeeds, while preserving the requested `Workspace / Bookmark manager / Activity` shell.
+- Scoped all code changes to the task-owned options entrypoint.
+
+### Focused Verification
+
+- `pnpm test -- tests/ui/options-view-model.test.ts`
+  - Result: passed. This repo's Vitest CLI still resolved that invocation to the full current suite, which completed successfully: 20 test files passed, 121 tests passed.
+- `pnpm exec tsc --noEmit`
+  - Result: passed.

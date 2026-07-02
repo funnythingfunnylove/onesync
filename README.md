@@ -73,7 +73,7 @@ pnpm wxt build -b safari
 pnpm package:safari
 ```
 
-This generates the Xcode wrapper project required to run the Safari extension.
+This generates a macOS-only Xcode wrapper project required to run the Safari extension locally in Safari.
 
 ## Notes
 

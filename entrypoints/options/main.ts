@@ -1,4 +1,13 @@
 import { browser } from "wxt/browser";
+import {
+  BookmarkPlus,
+  CheckSquare,
+  Filter,
+  Merge,
+  Search,
+  Trash2,
+  type IconNode
+} from "lucide";
 import { shouldLoadPrivateBookmarksState, type OptionsWorkspacePage } from "./page-state";
 import { getBookmarkStorageMode } from "../../src/core/browser/bookmarks";
 import type { PrivateBookmarkViewNode } from "../../src/core/private-bookmarks/view-state";
@@ -9,7 +18,9 @@ import { getBookmarkSourceLabel } from "../../src/ui/bookmark-source";
 import {
   buildPrivateBookmarkManagerViewModel,
   buildPrivateBookmarkEditDraft,
+  dedupePrivateBookmarksAndSync,
   exportEncodedBundle,
+  filterPrivateBookmarkManagerNodes,
   getPrivateBookmarkLinkHref,
   importEncodedBundle,
   loadOptionsViewModel,
@@ -19,8 +30,16 @@ import {
   requestOptionsSync,
   saveAndSyncOptionsConfig,
   saveOptionsConfig,
-  validatePrivateBookmarkUrl
+  validatePrivateBookmarkUrl,
+  type PrivateBookmarkFilterMode
 } from "../../src/ui/view-models/options";
+import {
+  PRIVATE_BOOKMARK_TAGS,
+  getPrivateBookmarkTagOption,
+  normalizePrivateBookmarkTagTexts,
+  normalizePrivateBookmarkTags,
+  type PrivateBookmarkTag
+} from "../../src/core/private-bookmarks/tags";
 import {
   formatSyncProgressLabel,
   formatSyncStatusLabel,
@@ -36,8 +55,10 @@ let selectedPrivateFolderId: string | null = null;
 let selectedPrivateFolderContextId: string | null = null;
 let selectedPrivateNodeId: string | null = null;
 let privateSearchQuery = "";
+let privateFilterMode: PrivateBookmarkFilterMode = "all";
 let editingPrivateNodeId: string | null = null;
-const privateEditDrafts = new Map<string, { title: string; url?: string }>();
+const privateEditDrafts = new Map<string, { title: string; url?: string; tags?: PrivateBookmarkTag[] }>();
+let selectedPrivateNodeIds = new Set<string>();
 
 function escapeHtml(value: string): string {
   return value
@@ -45,6 +66,136 @@ function escapeHtml(value: string): string {
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
     .replaceAll("\"", "&quot;");
+}
+
+const commandIcons = {
+  "bookmark-plus": BookmarkPlus,
+  "check-square": CheckSquare,
+  filter: Filter,
+  merge: Merge,
+  search: Search,
+  trash: Trash2
+} satisfies Record<string, IconNode>;
+
+function renderIcon(name: keyof typeof commandIcons): string {
+  const iconNode = commandIcons[name];
+  const children = iconNode
+    .map(([tag, attrs]) => {
+      const attributes = Object.entries(attrs)
+        .map(([attrName, attrValue]) => `${attrName}="${escapeHtml(String(attrValue))}"`)
+        .join(" ");
+
+      return `<${tag} ${attributes}></${tag}>`;
+    })
+    .join("");
+
+  return `
+    <svg
+      class="command-icon"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="2"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      aria-hidden="true"
+      focusable="false"
+    >
+      ${children}
+    </svg>
+  `;
+}
+
+function renderTagStyle(color: string): string {
+  return /^#[0-9a-f]{6}$/u.test(color)
+    ? ` style="--tag-bg: ${escapeHtml(color)};"`
+    : "";
+}
+
+function renderPrivateBookmarkTags(tags: ReadonlyArray<string | PrivateBookmarkTag>): string {
+  if (tags.length === 0) {
+    return "";
+  }
+
+  return `
+    <span class="bookmark-tag-list" aria-label="Bookmark tags">
+      ${tags
+        .map((tagValue) => {
+          const tagText = typeof tagValue === "string" ? tagValue : tagValue.text;
+          const tag = getPrivateBookmarkTagOption(tagText);
+          const tagColor = typeof tagValue === "string" ? tag.color : tagValue.color;
+
+          return `<span class="bookmark-tag ${tag.colorClass}"${renderTagStyle(tagColor)}>${escapeHtml(tag.label)}</span>`;
+        })
+        .join("")}
+    </span>
+  `;
+}
+
+function renderPrivateBookmarkTagEditor(selectedTagIds: ReadonlyArray<string | PrivateBookmarkTag>): string {
+  const selectedTagObjects = normalizePrivateBookmarkTags(selectedTagIds);
+  const selectedTagTexts = normalizePrivateBookmarkTagTexts(selectedTagObjects);
+  const selectedTags = new Set(selectedTagTexts);
+  const selectedTagColors = new Map(selectedTagObjects.map((tag) => [tag.text, tag.color]));
+  const presetTagIds: Set<string> = new Set(PRIVATE_BOOKMARK_TAGS.map((tag) => tag.id));
+  const customSelectedTags = selectedTagTexts.filter((tagId) => !presetTagIds.has(tagId));
+  const tagChoices = [
+    ...PRIVATE_BOOKMARK_TAGS,
+    ...customSelectedTags.map((tagId) => {
+      const tagOption = getPrivateBookmarkTagOption(tagId);
+
+      return {
+        ...tagOption,
+        color: selectedTagColors.get(tagId) ?? tagOption.color
+      };
+    })
+  ];
+
+  return `
+    <fieldset class="bookmark-tag-picker">
+      <legend>Tags</legend>
+      <div class="bookmark-tag-picker-options">
+        ${tagChoices
+          .map(
+            (tag) => `
+              <label class="bookmark-tag-choice ${tag.colorClass}"${renderTagStyle(tag.color)}>
+                <input
+                  type="checkbox"
+                  name="tags"
+                  value="${escapeHtml(tag.id)}"
+                  ${selectedTags.has(tag.id) ? "checked" : ""}
+                />
+                <input
+                  type="hidden"
+                  name="tagColor:${escapeHtml(tag.id)}"
+                  value="${escapeHtml(tag.color)}"
+                />
+                <span>${escapeHtml(tag.label)}</span>
+              </label>
+            `
+          )
+          .join("")}
+      </div>
+      <label class="bookmark-custom-tag-field">
+        <span>New tag</span>
+        <span class="bookmark-custom-tag-inputs">
+          <input
+            name="customTag"
+            type="text"
+            maxlength="40"
+            placeholder="Add custom tag"
+          />
+          <input
+            class="bookmark-custom-tag-color"
+            name="customTagColor"
+            type="color"
+            value="#e7eef2"
+            aria-label="New tag color"
+          />
+        </span>
+      </label>
+    </fieldset>
+  `;
 }
 
 function renderActivityLog(items: Array<{ createdAt: string; level: string; message: string }>): string {
@@ -103,36 +254,6 @@ function renderWorkspaceTabs(activePage: OptionsWorkspacePage): string {
   `;
 }
 
-function renderPrivateFolderList(
-  folders: Array<{ id: string; title: string; depth: number; isSelected: boolean }>
-): string {
-  if (folders.length === 0) {
-    return `<p class="empty-state">No folders available.</p>`;
-  }
-
-  return `
-    <div class="private-folder-list" role="list">
-      ${folders
-        .map(
-          (folder) => `
-            <button
-              type="button"
-              class="private-folder-button ${folder.isSelected ? "is-selected" : ""}"
-              data-private-folder-id="${escapeHtml(folder.id)}"
-              style="--private-depth:${folder.depth};"
-            >
-              <span class="private-folder-row">
-                <span class="private-folder-glyph" aria-hidden="true"></span>
-                <strong class="private-folder-title">${escapeHtml(folder.title)}</strong>
-              </span>
-            </button>
-          `
-        )
-        .join("")}
-    </div>
-  `;
-}
-
 function renderPrivateVisibleNodes(
   nodes: Array<{
     id: string;
@@ -142,12 +263,16 @@ function renderPrivateVisibleNodes(
     depth: number;
     isSelected: boolean;
     childCount: number;
+    parentFolderId: string | null;
+    parentFolderTitle: string | null;
+    tags: PrivateBookmarkTag[];
   }>,
+  selectedNodeIds: Set<string>,
   editingNodeId: string | null,
   searchQuery: string
 ): string {
   if (nodes.length === 0) {
-    return `<p class="empty-state">${searchQuery.trim() ? "No items match your search." : "Nothing is in this folder yet."}</p>`;
+    return `<p class="empty-state">${searchQuery.trim() ? "No bookmarks match your search." : "No bookmarks yet."}</p>`;
   }
 
   return `
@@ -157,10 +282,20 @@ function renderPrivateVisibleNodes(
           const draft = editingNodeId === node.id ? privateEditDrafts.get(node.id) : undefined;
           const draftTitle = draft?.title ?? node.title;
           const draftUrl = draft?.url ?? node.url ?? "";
+          const draftTags = draft?.tags ?? node.tags;
           const bookmarkLinkHref = getPrivateBookmarkLinkHref(node.url);
+          const isChecked = selectedNodeIds.has(node.id);
 
           return `
-            <div class="private-node-row private-node-row-${node.type}">
+            <div class="private-node-row private-node-row-${node.type} ${isChecked ? "is-checked" : ""}">
+              <label class="private-node-select">
+                <input
+                  type="checkbox"
+                  data-private-select-node-id="${escapeHtml(node.id)}"
+                  ${isChecked ? "checked" : ""}
+                  aria-label="Select ${escapeHtml(node.title)}"
+                />
+              </label>
               <div class="private-node-card ${node.isSelected ? "is-selected" : ""}">
                 ${
                   editingNodeId === node.id
@@ -185,6 +320,7 @@ function renderPrivateVisibleNodes(
                                   value="${escapeHtml(draftUrl)}"
                                   placeholder="https://example.com/"
                                 />
+                                ${renderPrivateBookmarkTagEditor(draftTags)}
                               `
                               : ""
                           }
@@ -211,14 +347,8 @@ function renderPrivateVisibleNodes(
                         >
                           <span class="private-node-header">
                             <strong class="private-node-title">${escapeHtml(node.title)}</strong>
-                            <span class="private-node-meta">
-                              ${
-                                node.type === "folder"
-                                  ? `${node.childCount} item${node.childCount === 1 ? "" : "s"}`
-                                  : escapeHtml(node.url ?? "")
-                              }
-                            </span>
                           </span>
+                          ${renderPrivateBookmarkTags(node.tags)}
                         </button>
                         ${
                           node.type === "bookmark" && bookmarkLinkHref
@@ -273,25 +403,6 @@ function findPrivateNodeById(
   }
 
   return null;
-}
-
-function filterPrivateVisibleNodes<T extends { title: string; url?: string }>(
-  nodes: T[],
-  query: string
-): T[] {
-  const normalizedQuery = query.trim().toLowerCase();
-
-  if (!normalizedQuery) {
-    return nodes;
-  }
-
-  return nodes.filter((node) => {
-    const haystack = [node.title, node.url ?? ""]
-      .join(" ")
-      .toLowerCase();
-
-    return haystack.includes(normalizedQuery);
-  });
 }
 
 function rememberActivePrivateEditDraft(privateBookmarksState: Awaited<ReturnType<typeof loadPrivateBookmarksViewState>>): void {
@@ -372,7 +483,7 @@ async function applyPrivateBookmarkOperation(
   try {
     const nextState = await mutatePrivateBookmarks(operation);
 
-    if (operation.type === "create-folder" || operation.type === "create-bookmark") {
+    if (operation.type === "create-bookmark") {
       selectedPrivateFolderContextId = null;
       selectedPrivateFolderId = operation.parentId;
     }
@@ -380,11 +491,6 @@ async function applyPrivateBookmarkOperation(
     if (operation.type === "delete-node" && selectedPrivateNodeId === operation.nodeId) {
       selectedPrivateFolderContextId = null;
       selectedPrivateNodeId = selectedPrivateFolderId;
-    }
-
-    if (operation.type === "move-node" && selectedPrivateNodeId === operation.nodeId) {
-      selectedPrivateFolderContextId = null;
-      selectedPrivateFolderId = operation.destinationFolderId;
     }
 
     if (
@@ -397,6 +503,48 @@ async function applyPrivateBookmarkOperation(
 
     pageMessage = { type: "info", text: successMessage };
     await renderOptionsPage(nextState);
+  } catch (error) {
+    pageMessage = {
+      type: "error",
+      text: error instanceof Error ? error.message : "Private bookmark update failed."
+    };
+    await renderOptionsPage();
+  }
+}
+
+async function applyPrivateBookmarkOperations(
+  operations: PrivateBookmarkOperation[],
+  successMessage: string
+): Promise<void> {
+  if (operations.length === 0) {
+    return;
+  }
+
+  try {
+    let nextState: Awaited<ReturnType<typeof loadPrivateBookmarksViewState>> | null = null;
+
+    for (const operation of operations) {
+      nextState = await mutatePrivateBookmarks(operation);
+    }
+
+    for (const operation of operations) {
+      if ("nodeId" in operation) {
+        selectedPrivateNodeIds.delete(operation.nodeId);
+        privateEditDrafts.delete(operation.nodeId);
+
+        if (editingPrivateNodeId === operation.nodeId) {
+          editingPrivateNodeId = null;
+        }
+      }
+
+      if (operation.type === "delete-node" && selectedPrivateNodeId === operation.nodeId) {
+        selectedPrivateNodeId = selectedPrivateFolderId;
+      }
+
+    }
+
+    pageMessage = { type: "info", text: successMessage };
+    await renderOptionsPage(nextState ?? undefined);
   } catch (error) {
     pageMessage = {
       type: "error",
@@ -571,100 +719,100 @@ async function renderOptionsPage(
     selectedPrivateFolderId = privateBookmarkManager.selectedFolder?.id ?? null;
     selectedPrivateNodeId = privateBookmarkManager.selectedNode?.id ?? selectedPrivateFolderId;
     const visibleNodeIds = new Set(privateBookmarkManager.visibleNodes.map((node) => node.id));
+    selectedPrivateNodeIds = new Set(
+      Array.from(selectedPrivateNodeIds).filter((nodeId) => visibleNodeIds.has(nodeId))
+    );
 
     if (editingPrivateNodeId && !visibleNodeIds.has(editingPrivateNodeId)) {
       editingPrivateNodeId = null;
     }
 
-    const filteredVisibleNodes = filterPrivateVisibleNodes(privateBookmarkManager.visibleNodes, privateSearchQuery);
-    const contentHeading = "Current folder";
-    const activeFolderLabel = privateBookmarkManager.selectedFolder?.title ?? "Library";
+    if (!privateBookmarkManager.tagOptions.some((tag) => tag.id === privateFilterMode)) {
+      privateFilterMode = "all";
+    }
+    const filteredVisibleNodes = filterPrivateBookmarkManagerNodes(privateBookmarkManager.visibleNodes, {
+      query: privateSearchQuery,
+      tagId: privateFilterMode
+    });
+    const selectedVisibleCount = filteredVisibleNodes.filter((node) => selectedPrivateNodeIds.has(node.id)).length;
+    const selectedTotalCount = selectedPrivateNodeIds.size;
+    const allVisibleSelected = filteredVisibleNodes.length > 0 && selectedVisibleCount === filteredVisibleNodes.length;
+    const contentHeading = "All bookmarks";
     const searchMatchLabel = privateSearchQuery.trim()
       ? `${filteredVisibleNodes.length} match${filteredVisibleNodes.length === 1 ? "" : "es"}`
-      : `${privateBookmarkManager.visibleNodes.length} items`;
-    const contentDescription = `${activeFolderLabel} • ${searchMatchLabel}`;
-    const folderCount = privateBookmarkManager.folderEntries.length;
-    const privateBookmarkModeMeta = privateBookmarkManager.mode === "native"
-      ? "Native carrier"
-      : privateBookmarkManager.mode === "private"
-        ? "Private store"
-        : "Unavailable";
+      : `${privateBookmarkManager.visibleNodes.length} bookmark${privateBookmarkManager.visibleNodes.length === 1 ? "" : "s"}`;
+    const contentDescription = searchMatchLabel;
 
     bookmarkPageContent = `
       <section class="content-section bookmark-section" id="private-bookmark-manager">
-        <div class="section-header">
-          <div class="section-intro">
-            <h2>Bookmark manager</h2>
-            <p class="section-copy">${escapeHtml(privateBookmarkManager.modeHint)}</p>
-          </div>
-          <div class="section-summary">
-            <span>${escapeHtml(String(privateBookmarkManager.itemCount))} items</span>
-            <strong>${escapeHtml(activeFolderLabel)}</strong>
-            <p>${escapeHtml(privateBookmarkModeMeta)}</p>
-          </div>
-        </div>
-
-        <div class="bookmark-workspace">
-          <aside class="bookmark-pane bookmark-directory-pane">
-            <div class="bookmark-pane-header bookmark-pane-header-rail">
-              <div>
-                <h3>Directory</h3>
-                <p class="bookmark-pane-copy">${folderCount} folders indexed</p>
-              </div>
-            </div>
-            <div class="bookmark-pane-body bookmark-pane-body-rail">
-              ${renderPrivateFolderList(privateBookmarkManager.folderEntries)}
-            </div>
-          </aside>
-
+        <div class="bookmark-workspace bookmark-workspace-flat">
           <section class="bookmark-pane bookmark-content-pane">
-            <div class="bookmark-pane-toolbar bookmark-pane-toolbar-main">
-              <div class="bookmark-pane-header bookmark-pane-header-main">
-                <div>
+            <nav class="bookmark-command-bar" aria-label="Bookmark manager actions">
+              <div class="bookmark-command-top">
+                <div class="bookmark-command-summary">
                   <h3>${escapeHtml(contentHeading)}</h3>
                   <p class="bookmark-pane-copy">${escapeHtml(contentDescription)}</p>
                 </div>
-                <label class="bookmark-search-field">
-                  <span>Search</span>
-                  <input
-                    id="private-search"
-                    type="search"
-                    value="${escapeHtml(privateSearchQuery)}"
-                    placeholder="Search title or URL"
-                  />
-                </label>
-              </div>
-              <div class="bookmark-toolbar-row">
-                <div class="bookmark-toolbar-actions">
-                  <button type="button" class="secondary-button compact-button" data-private-action="create-folder" ${privateBookmarkManager.actions.createFolder.disabled ? "disabled" : ""}>
-                    ${escapeHtml(privateBookmarkManager.actions.createFolder.label)}
-                  </button>
-                  <button type="button" class="secondary-button compact-button" data-private-action="create-bookmark" ${privateBookmarkManager.actions.createBookmark.disabled ? "disabled" : ""}>
-                    ${escapeHtml(privateBookmarkManager.actions.createBookmark.label)}
-                  </button>
-                  <label class="field-group field-group-inline bookmark-move-field">
-                    <span>Move selection</span>
-                    <select id="private-move-destination" ${privateBookmarkManager.actions.move.disabled ? "disabled" : ""}>
-                      ${privateBookmarkManager.moveDestinations
+                <div class="bookmark-command-controls">
+                  <label class="bookmark-search-field">
+                    <span class="bookmark-field-label">${renderIcon("search")}Search</span>
+                    <input
+                      id="private-search"
+                      type="search"
+                      value="${escapeHtml(privateSearchQuery)}"
+                      placeholder="Title or URL"
+                    />
+                  </label>
+                  <label class="bookmark-filter-field">
+                    <span class="bookmark-field-label">${renderIcon("filter")}Filter</span>
+                    <select id="private-filter">
+                      ${privateBookmarkManager.tagOptions
                         .map(
-                          (folder) => `
-                            <option value="${escapeHtml(folder.id)}" ${folder.isSelected ? "selected" : ""}>
-                              ${"&nbsp;&nbsp;".repeat(folder.depth)}${escapeHtml(folder.title)}
+                          (tag) => `
+                            <option value="${escapeHtml(tag.id)}" ${privateFilterMode === tag.id ? "selected" : ""}>
+                              ${escapeHtml(tag.label)}
                             </option>
                           `
                         )
                         .join("")}
                     </select>
                   </label>
-                  <button type="button" class="secondary-button compact-button" data-private-action="move" ${privateBookmarkManager.actions.move.disabled ? "disabled" : ""}>
-                    ${escapeHtml(privateBookmarkManager.actions.move.label)}
+                </div>
+              </div>
+              <div class="bookmark-command-bottom">
+                <div class="bookmark-command-group bookmark-command-group-selection">
+                  <label class="bookmark-select-all">
+                    <input
+                      id="private-select-visible"
+                      type="checkbox"
+                      ${allVisibleSelected ? "checked" : ""}
+                      ${filteredVisibleNodes.length === 0 ? "disabled" : ""}
+                    />
+                    ${renderIcon("check-square")}
+                    <span>Select visible</span>
+                  </label>
+                  <span class="bookmark-selection-count">${selectedTotalCount} selected</span>
+                  <button type="button" class="secondary-button danger-button compact-button icon-button" data-private-action="delete-selected" ${selectedTotalCount === 0 ? "disabled" : ""}>
+                    ${renderIcon("trash")}
+                    <span>Delete selected</span>
+                  </button>
+                </div>
+                <div class="bookmark-command-group bookmark-command-group-create">
+                  <button type="button" class="secondary-button compact-button icon-button" data-private-action="create-bookmark" ${privateBookmarkManager.actions.createBookmark.disabled ? "disabled" : ""}>
+                    ${renderIcon("bookmark-plus")}
+                    <span>${escapeHtml(privateBookmarkManager.actions.createBookmark.label)}</span>
+                  </button>
+                  <button type="button" class="secondary-button compact-button icon-button" data-private-action="dedupe" ${privateBookmarkManager.actions.dedupe.disabled ? "disabled" : ""}>
+                    ${renderIcon("merge")}
+                    <span>${escapeHtml(privateBookmarkManager.actions.dedupe.label)}</span>
                   </button>
                 </div>
               </div>
-            </div>
+            </nav>
             <div class="bookmark-pane-body bookmark-pane-body-main">
               ${renderPrivateVisibleNodes(
                 filteredVisibleNodes,
+                selectedPrivateNodeIds,
                 editingPrivateNodeId,
                 privateSearchQuery
               )}
@@ -769,8 +917,9 @@ async function renderOptionsPage(
   const importButton = document.querySelector<HTMLButtonElement>("#import-bundle");
   const bundleTextarea = document.querySelector<HTMLTextAreaElement>("#bundle-json");
   const privateManagerRoot = document.querySelector<HTMLElement>("#private-bookmark-manager");
-  const privateMoveDestination = document.querySelector<HTMLSelectElement>("#private-move-destination");
   const privateSearchInput = document.querySelector<HTMLInputElement>("#private-search");
+  const privateFilterSelect = document.querySelector<HTMLSelectElement>("#private-filter");
+  const privateSelectVisible = document.querySelector<HTMLInputElement>("#private-select-visible");
   const workspaceLinks = document.querySelector<HTMLElement>(".workspace-links");
 
   workspaceLinks?.addEventListener("click", async (event) => {
@@ -901,6 +1050,65 @@ async function renderOptionsPage(
       });
     });
 
+    privateFilterSelect?.addEventListener("change", async () => {
+      privateFilterMode = privateFilterSelect.value as PrivateBookmarkFilterMode;
+      await renderOptionsPage(privateBookmarksState);
+    });
+
+    privateSelectVisible?.addEventListener("change", async () => {
+      const visibleCheckboxes = Array.from(
+        document.querySelectorAll<HTMLInputElement>("[data-private-select-node-id]")
+      );
+
+      if (privateSelectVisible.checked) {
+        for (const checkbox of visibleCheckboxes) {
+          const nodeId = checkbox.dataset.privateSelectNodeId;
+
+          if (!nodeId) {
+            continue;
+          }
+
+          selectedPrivateNodeIds.add(nodeId);
+        }
+      } else {
+        for (const checkbox of visibleCheckboxes) {
+          const nodeId = checkbox.dataset.privateSelectNodeId;
+
+          if (!nodeId) {
+            continue;
+          }
+
+          selectedPrivateNodeIds.delete(nodeId);
+        }
+      }
+
+      await renderOptionsPage(privateBookmarksState);
+    });
+
+    privateManagerRoot?.addEventListener("change", async (event) => {
+      const checkbox = event.target instanceof HTMLInputElement
+        ? event.target.closest<HTMLInputElement>("[data-private-select-node-id]")
+        : null;
+
+      if (!checkbox) {
+        return;
+      }
+
+      const nodeId = checkbox.dataset.privateSelectNodeId;
+
+      if (!nodeId) {
+        return;
+      }
+
+      if (checkbox.checked) {
+        selectedPrivateNodeIds.add(nodeId);
+      } else {
+        selectedPrivateNodeIds.delete(nodeId);
+      }
+
+      await renderOptionsPage(privateBookmarksState);
+    });
+
     privateManagerRoot?.addEventListener("submit", async (event) => {
       const form = event.target instanceof HTMLFormElement
         ? event.target.closest<HTMLFormElement>("[data-private-edit-form-id]")
@@ -952,7 +1160,8 @@ async function renderOptionsPage(
             type: "update-bookmark",
             nodeId: node.id,
             title,
-            url: validatedUrl.value
+            url: validatedUrl.value,
+            tags: privateEditDrafts.get(editingNodeId)?.tags ?? []
           },
           "Bookmark updated."
         );
@@ -972,20 +1181,10 @@ async function renderOptionsPage(
 
     privateManagerRoot?.addEventListener("click", async (event) => {
       const target = event.target instanceof HTMLElement
-        ? event.target.closest<HTMLElement>("[data-private-folder-id], [data-private-node-id], [data-private-action], [data-private-edit-node-id], [data-private-cancel-edit], [data-private-delete-node-id]")
+        ? event.target.closest<HTMLElement>("[data-private-node-id], [data-private-action], [data-private-edit-node-id], [data-private-cancel-edit], [data-private-delete-node-id]")
         : null;
 
       if (!target) {
-        return;
-      }
-
-      const folderId = target.dataset.privateFolderId;
-
-      if (folderId) {
-        selectedPrivateFolderContextId = null;
-        selectedPrivateFolderId = folderId;
-        selectedPrivateNodeId = folderId;
-        await renderOptionsPage(privateBookmarksState);
         return;
       }
 
@@ -1050,31 +1249,9 @@ async function renderOptionsPage(
       }
 
       const action = target.dataset.privateAction;
-      const selectedNode = privateBookmarkManager.selectedNode;
       const selectedFolder = privateBookmarkManager.selectedFolder;
 
       switch (action) {
-        case "create-folder": {
-          if (!selectedFolder) {
-            return;
-          }
-
-          const title = window.prompt("Folder name", "");
-
-          if (!title || !title.trim()) {
-            return;
-          }
-
-          await applyPrivateBookmarkOperation(
-            {
-              type: "create-folder",
-              parentId: selectedFolder.id,
-              title: title.trim()
-            },
-            "Folder created."
-          );
-          return;
-        }
         case "create-bookmark": {
           if (!selectedFolder) {
             return;
@@ -1110,19 +1287,49 @@ async function renderOptionsPage(
           );
           return;
         }
-        case "move": {
-          if (!selectedNode || !privateMoveDestination?.value) {
+        case "delete-selected": {
+          if (selectedPrivateNodeIds.size === 0) {
             return;
           }
 
-          await applyPrivateBookmarkOperation(
-            {
-              type: "move-node",
-              nodeId: selectedNode.id,
-              destinationFolderId: privateMoveDestination.value
-            },
-            "Bookmark moved."
+          const selectedCount = selectedPrivateNodeIds.size;
+          const confirmed = window.confirm(
+            `Delete ${selectedCount} selected bookmark${selectedCount === 1 ? "" : "s"}?`
           );
+
+          if (!confirmed) {
+            return;
+          }
+
+          const operations = Array.from(selectedPrivateNodeIds).map((nodeId) => ({
+            type: "delete-node" as const,
+            nodeId
+          }));
+
+          await applyPrivateBookmarkOperations(
+            operations,
+            `${operations.length} bookmark${operations.length === 1 ? "" : "s"} deleted.`
+          );
+          selectedPrivateNodeIds = new Set<string>();
+          return;
+        }
+        case "dedupe": {
+          pageMessage = { type: "info", text: "Removing duplicate bookmarks and starting sync..." };
+          await renderOptionsPage(privateBookmarksState);
+
+          try {
+            const nextState = await dedupePrivateBookmarksAndSync();
+            editingPrivateNodeId = null;
+            privateEditDrafts.clear();
+            pageMessage = { type: "info", text: "Duplicate bookmarks removed. Sync has started." };
+            await renderOptionsPage(nextState);
+          } catch (error) {
+            pageMessage = {
+              type: "error",
+              text: error instanceof Error ? error.message : "Failed to remove duplicate bookmarks."
+            };
+            await renderOptionsPage(privateBookmarksState);
+          }
           return;
         }
       }

@@ -62,6 +62,7 @@ function createBundle(): BookmarkBundle {
         type: "bookmark",
         title: "Example",
         url: "https://example.com/",
+        tags: ["work"],
         addedAt: "2026-07-01T11:59:00.000Z",
         updatedAt: "2026-07-01T11:59:00.000Z"
       },
@@ -77,7 +78,7 @@ function createBundle(): BookmarkBundle {
     tombstones: [],
     meta: {
       client: "onesync",
-      clientVersion: "0.1.3"
+      clientVersion: "0.2.0"
     }
   };
 }
@@ -128,7 +129,11 @@ describe("private bookmark view-state", () => {
       id: bundle.roots.toolbar,
       children: expect.arrayContaining([
         expect.objectContaining({ id: "folder-a", type: "folder" }),
-        expect.objectContaining({ id: "bookmark-1", type: "bookmark" })
+        expect.objectContaining({
+          id: "bookmark-1",
+          type: "bookmark",
+          tags: [{ text: "work", color: "#e8f1eb" }]
+        })
       ])
     });
   });

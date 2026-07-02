@@ -264,7 +264,7 @@ const privateCarrierBundle: BookmarkBundle = {
   tombstones: [],
   meta: {
     client: "onesync",
-    clientVersion: "0.1.3"
+    clientVersion: "0.2.0"
   }
 };
 
@@ -325,7 +325,7 @@ const updatedNativeBundle: BookmarkBundle = {
   tombstones: [],
   meta: {
     client: "onesync",
-    clientVersion: "0.1.3"
+    clientVersion: "0.2.0"
   }
 };
 
@@ -346,6 +346,25 @@ const syncedNativeBundle: BookmarkBundle = {
       url: "https://synced.example.com/",
       addedAt: "2026-07-01T01:00:00.000Z",
       updatedAt: "2026-07-01T02:00:00.000Z"
+    }
+  }
+};
+
+const taggedNativeBundle: BookmarkBundle = {
+  ...updatedNativeBundle,
+  nodes: {
+    ...updatedNativeBundle.nodes,
+    "native-bookmark-2": {
+      id: "native-bookmark-2",
+      type: "bookmark",
+      title: "Tagged Bookmark",
+      url: "https://tagged.example.com/",
+      tags: [
+        { text: "work", color: "#e8f1eb" },
+        { text: "learning queue", color: "#e7eef2" }
+      ],
+      addedAt: "2026-07-01T01:00:00.000Z",
+      updatedAt: "2026-07-01T01:30:00.000Z"
     }
   }
 };
@@ -457,6 +476,36 @@ describe("private manager carrier integration", () => {
       url: "https://imported.example.com/"
     });
     expect(bundle.nodes["native-bookmark-1"]).toBeUndefined();
+  });
+
+  it("preserves bookmark tags across native carrier save and reload", async () => {
+    const saved = await savePrivateManagerBundle(sampleConfig, taggedNativeBundle, "native");
+    const savedBookmark = Object.values(saved.nodes).find(
+      (node) => node.type === "bookmark" && node.title === "Tagged Bookmark"
+    );
+
+    expect(savedBookmark).toMatchObject({
+      title: "Tagged Bookmark",
+      url: "https://tagged.example.com/",
+      tags: [
+        { text: "work", color: "#e8f1eb" },
+        { text: "learning queue", color: "#e7eef2" }
+      ]
+    });
+
+    const reloaded = await loadPrivateManagerBundle(sampleConfig);
+    const reloadedBookmark = Object.values(reloaded.nodes).find(
+      (node) => node.type === "bookmark" && node.title === "Tagged Bookmark"
+    );
+
+    expect(reloadedBookmark).toMatchObject({
+      title: "Tagged Bookmark",
+      url: "https://tagged.example.com/",
+      tags: [
+        { text: "work", color: "#e8f1eb" },
+        { text: "learning queue", color: "#e7eef2" }
+      ]
+    });
   });
 
   it("reads back private carrier updates after a local shared-bundle apply", async () => {

@@ -591,6 +591,89 @@ describe("syncOnce", () => {
     );
   });
 
+  it("uploads a deduplicated merged bundle when devices report the same bookmark with different native ids", async () => {
+    const localDuplicateBundle = structuredClone(localBundle);
+    localDuplicateBundle.generatedAt = "2026-06-30T12:03:00.000Z";
+    localDuplicateBundle.nodes["toolbar-root"] = {
+      id: "toolbar-root",
+      type: "folder",
+      title: "Bookmarks Bar",
+      children: ["local-bookmark"],
+      addedAt: "2026-06-30T11:59:00.000Z",
+      updatedAt: "2026-06-30T12:03:00.000Z"
+    };
+    localDuplicateBundle.nodes["local-bookmark"] = {
+      id: "local-bookmark",
+      type: "bookmark",
+      title: "Shared Docs",
+      url: "https://example.com/docs",
+      addedAt: "2026-06-30T12:03:00.000Z",
+      updatedAt: "2026-06-30T12:03:00.000Z"
+    };
+    delete localDuplicateBundle.nodes["bookmark-1"];
+
+    const remoteDuplicateBundle = structuredClone(localBundle);
+    remoteDuplicateBundle.revision = "2026-06-30T12:04:00.000Z#device-2#snapshot";
+    remoteDuplicateBundle.deviceId = "device-2";
+    remoteDuplicateBundle.generatedAt = "2026-06-30T12:04:00.000Z";
+    remoteDuplicateBundle.nodes["toolbar-root"] = {
+      id: "toolbar-root",
+      type: "folder",
+      title: "Bookmarks Bar",
+      children: ["remote-bookmark"],
+      addedAt: "2026-06-30T11:59:00.000Z",
+      updatedAt: "2026-06-30T12:04:00.000Z"
+    };
+    remoteDuplicateBundle.nodes["remote-bookmark"] = {
+      id: "remote-bookmark",
+      type: "bookmark",
+      title: "Shared Docs",
+      url: "https://example.com/docs",
+      addedAt: "2026-06-30T12:04:00.000Z",
+      updatedAt: "2026-06-30T12:04:00.000Z"
+    };
+    delete remoteDuplicateBundle.nodes["bookmark-1"];
+
+    loadSharedBookmarkBundle.mockResolvedValueOnce(localDuplicateBundle);
+    fetchLatestBundle.mockResolvedValue({
+      bundleEtag: "\"bundle-etag-duplicates\"",
+      metadataEtag: "\"meta-etag-duplicates\"",
+      bundle: encodedBundle
+    });
+    decodeBundle.mockResolvedValueOnce(remoteDuplicateBundle);
+
+    await syncOnce({
+      deviceId: "device-1",
+      webdavUrl: "https://dav.example.com",
+      username: "alice",
+      password: "secret",
+      basePath: "/onesync",
+      intervalMinutes: 15,
+      scheduledSyncEnabled: true,
+      allowInsecureHttp: false
+    });
+
+    const appliedBundle = applySharedBundleLocally.mock.calls[0]?.[0] as BookmarkBundle;
+    const uploadedBundle = encodeBundle.mock.calls[0]?.[0] as BookmarkBundle;
+
+    expect(appliedBundle.nodes["toolbar-root"]).toMatchObject({
+      children: ["local-bookmark"]
+    });
+    expect(appliedBundle.nodes["remote-bookmark"]).toBeUndefined();
+    expect(uploadedBundle.nodes["toolbar-root"]).toMatchObject({
+      children: ["local-bookmark"]
+    });
+    expect(uploadedBundle.nodes["remote-bookmark"]).toBeUndefined();
+    expect(uploadedBundle.tombstones).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "remote-bookmark",
+          deletedAt: "2026-06-30T12:04:00.000Z"
+        })
+      ])
+    );
+  });
+
   it("downloads and applies the remote bundle without re-uploading when only the remote side changed", async () => {
     const baseBundle = structuredClone(localBundle);
     const remoteBundle = {

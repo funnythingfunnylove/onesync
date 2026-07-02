@@ -6,6 +6,18 @@ function newestNode(left: BookmarkNode, right: BookmarkNode): BookmarkNode {
   return left.updatedAt >= right.updatedAt ? left : right;
 }
 
+function normalizeBookmarkUrlForDedupe(url: string): string {
+  try {
+    return new URL(url).href;
+  } catch {
+    return url.trim();
+  }
+}
+
+function newestTimestamp(left: string, right: string): string {
+  return left >= right ? left : right;
+}
+
 function findParentFolderId(bundle: BookmarkBundle, nodeId: string): string | null {
   for (const [candidateId, candidate] of Object.entries(bundle.nodes)) {
     if (candidate.type !== "folder") {
@@ -70,6 +82,96 @@ function deriveDeletionTombstones(base: BookmarkBundle | null, current: Bookmark
       id: nodeId,
       deletedAt: current.generatedAt
     }));
+}
+
+function collectBookmarkIdsInDisplayOrder(
+  nodes: Record<string, BookmarkNode>,
+  nodeId: string,
+  collected: string[],
+  visited: Set<string>
+): void {
+  if (visited.has(nodeId)) {
+    return;
+  }
+
+  const node = nodes[nodeId];
+
+  if (!node) {
+    return;
+  }
+
+  visited.add(nodeId);
+
+  if (node.type === "bookmark") {
+    collected.push(nodeId);
+    return;
+  }
+
+  for (const childId of node.children) {
+    collectBookmarkIdsInDisplayOrder(nodes, childId, collected, visited);
+  }
+}
+
+function findDuplicateBookmarkIdsByUrl(bundle: Pick<BookmarkBundle, "roots" | "nodes">): string[] {
+  const bookmarkIds: string[] = [];
+  const visited = new Set<string>();
+  const seenUrls = new Set<string>();
+  const duplicateIds: string[] = [];
+
+  for (const rootId of Object.values(bundle.roots)) {
+    collectBookmarkIdsInDisplayOrder(bundle.nodes, rootId, bookmarkIds, visited);
+  }
+
+  for (const bookmarkId of bookmarkIds) {
+    const node = bundle.nodes[bookmarkId];
+
+    if (!node || node.type !== "bookmark") {
+      continue;
+    }
+
+    const normalizedUrl = normalizeBookmarkUrlForDedupe(node.url);
+
+    if (seenUrls.has(normalizedUrl)) {
+      duplicateIds.push(bookmarkId);
+      continue;
+    }
+
+    seenUrls.add(normalizedUrl);
+  }
+
+  return duplicateIds;
+}
+
+function removeDuplicateBookmarks(
+  nodes: Record<string, BookmarkNode>,
+  roots: BookmarkBundle["roots"],
+  tombstonesById: Map<string, BookmarkTombstone>,
+  deletedAt: string
+): void {
+  const duplicateIds = findDuplicateBookmarkIdsByUrl({ nodes, roots });
+
+  if (duplicateIds.length === 0) {
+    return;
+  }
+
+  const duplicateIdSet = new Set(duplicateIds);
+
+  for (const node of Object.values(nodes)) {
+    if (node.type !== "folder") {
+      continue;
+    }
+
+    node.children = node.children.filter((childId) => !duplicateIdSet.has(childId));
+  }
+
+  for (const duplicateId of duplicateIds) {
+    delete nodes[duplicateId];
+
+    const existing = tombstonesById.get(duplicateId);
+    if (!existing || existing.deletedAt < deletedAt) {
+      tombstonesById.set(duplicateId, { id: duplicateId, deletedAt });
+    }
+  }
 }
 
 export function mergeBundles(
@@ -195,18 +297,27 @@ export function mergeBundles(
     };
   }
 
+  const roots = {
+    toolbar: local.roots.toolbar,
+    menu: local.roots.menu,
+    mobile: local.roots.mobile,
+    unfiled: local.roots.unfiled
+  };
+
+  removeDuplicateBookmarks(
+    mergedNodes,
+    roots,
+    tombstonesById,
+    newestTimestamp(local.generatedAt, remote.generatedAt)
+  );
+
   return normalizeBundle({
     kind: "onesync.bookmarks",
     schemaVersion: 1,
     revision: local.revision,
     deviceId: local.deviceId,
     generatedAt: local.generatedAt,
-    roots: {
-      toolbar: local.roots.toolbar,
-      menu: local.roots.menu,
-      mobile: local.roots.mobile,
-      unfiled: local.roots.unfiled
-    },
+    roots,
     nodes: mergedNodes,
     tombstones: Array.from(tombstonesById.values()),
     meta: {

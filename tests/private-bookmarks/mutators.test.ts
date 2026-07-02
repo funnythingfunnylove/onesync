@@ -87,7 +87,7 @@ function createBundle(): BookmarkBundle {
     tombstones: [],
     meta: {
       client: "onesync",
-      clientVersion: "0.1.3"
+      clientVersion: "0.2.0"
     }
   };
 }
@@ -135,6 +135,52 @@ describe("private bookmark mutators", () => {
     expect(Object.values(next.nodes).some((node) => node.type === "bookmark" && node.title === "Docs")).toBe(true);
     expect(next.nodes["folder-b"]).toMatchObject({
       children: expect.arrayContaining([expect.any(String)]),
+      updatedAt: "2026-07-01T12:00:00.000Z"
+    });
+  });
+
+  it("creates and updates bookmark tags with normalized preset and custom values", () => {
+    const bundle = createBundle();
+
+    const created = applyPrivateBookmarkOperation(
+      bundle,
+      {
+        type: "create-bookmark",
+        parentId: "folder-b",
+        title: "Design notes",
+        url: "https://example.com/design",
+        tags: ["Work", "Design", "Learning Queue", "work", "learning queue"]
+      },
+      "device-1"
+    );
+    const createdBookmark = Object.values(created.nodes).find((node) => node.type === "bookmark" && node.title === "Design notes");
+
+    expect(createdBookmark).toMatchObject({
+      type: "bookmark",
+      tags: [
+        { text: "work", color: "#e8f1eb" },
+        { text: "design", color: "#eee9f3" },
+        { text: "learning queue", color: expect.stringMatching(/^#[0-9a-f]{6}$/u) }
+      ]
+    });
+
+    const updated = applyPrivateBookmarkOperation(
+      created,
+      {
+        type: "update-bookmark",
+        nodeId: createdBookmark!.id,
+        title: "Design notes",
+        url: "https://example.com/design",
+        tags: ["read-later", "Inbox"]
+      },
+      "device-1"
+    );
+
+    expect(updated.nodes[createdBookmark!.id]).toMatchObject({
+      tags: [
+        { text: "read-later", color: "#f3ecd9" },
+        { text: "inbox", color: expect.stringMatching(/^#[0-9a-f]{6}$/u) }
+      ],
       updatedAt: "2026-07-01T12:00:00.000Z"
     });
   });
@@ -210,7 +256,7 @@ describe("private bookmark mutators", () => {
         },
         "device-1"
       )
-    ).toThrow(/http:\/\/ or https:\/\//i);
+    ).toThrow(/unsupported scheme/i);
   });
 
   it("deletes a node subtree and records tombstones", () => {
@@ -237,6 +283,65 @@ describe("private bookmark mutators", () => {
         expect.objectContaining({ id: "folder-a", deletedAt: "2026-07-01T12:00:00.000Z" }),
         expect.objectContaining({ id: "folder-c", deletedAt: "2026-07-01T12:00:00.000Z" }),
         expect.objectContaining({ id: "bookmark-1", deletedAt: "2026-07-01T12:00:00.000Z" })
+      ])
+    );
+  });
+
+  it("deduplicates bookmarks by URL while keeping the first occurrence", () => {
+    const bundle = createBundle();
+    bundle.nodes["root-toolbar"] = {
+      ...bundle.nodes["root-toolbar"],
+      type: "folder",
+      children: ["bookmark-1", "folder-a", "duplicate-later"]
+    };
+    bundle.nodes["folder-a"] = {
+      ...bundle.nodes["folder-a"],
+      type: "folder",
+      children: ["duplicate-nested"]
+    };
+    bundle.nodes["duplicate-nested"] = {
+      id: "duplicate-nested",
+      type: "bookmark",
+      title: "Nested duplicate",
+      url: "https://example.com/",
+      addedAt: "2026-07-01T11:59:30.000Z",
+      updatedAt: "2026-07-01T11:59:30.000Z"
+    };
+    bundle.nodes["duplicate-later"] = {
+      id: "duplicate-later",
+      type: "bookmark",
+      title: "Later duplicate",
+      url: "https://example.com/",
+      addedAt: "2026-07-01T11:59:40.000Z",
+      updatedAt: "2026-07-01T11:59:40.000Z"
+    };
+
+    const next = applyPrivateBookmarkOperation(
+      bundle,
+      {
+        type: "dedupe-bookmarks"
+      },
+      "device-1"
+    );
+
+    expect(next.nodes["bookmark-1"]).toMatchObject({
+      title: "Example",
+      url: "https://example.com/"
+    });
+    expect(next.nodes["duplicate-nested"]).toBeUndefined();
+    expect(next.nodes["duplicate-later"]).toBeUndefined();
+    expect(next.nodes["root-toolbar"]).toMatchObject({
+      children: ["bookmark-1", "folder-a"],
+      updatedAt: "2026-07-01T12:00:00.000Z"
+    });
+    expect(next.nodes["folder-a"]).toMatchObject({
+      children: [],
+      updatedAt: "2026-07-01T12:00:00.000Z"
+    });
+    expect(next.tombstones).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "duplicate-nested", deletedAt: "2026-07-01T12:00:00.000Z" }),
+        expect.objectContaining({ id: "duplicate-later", deletedAt: "2026-07-01T12:00:00.000Z" })
       ])
     );
   });

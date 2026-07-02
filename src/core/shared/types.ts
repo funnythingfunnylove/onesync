@@ -1,3 +1,5 @@
+import type { PrivateBookmarkTag } from "../private-bookmarks/tags";
+
 export const ONESYNC_EXTENSION_NAME = "onesync" as const;
 
 export type BrowserTarget = "chrome" | "firefox" | "safari";
@@ -6,11 +8,12 @@ export type SyncIntervalMinutes = 1 | 5 | 15 | 30 | 60;
 
 export type PrivateBookmarkOperation =
   | { type: "create-folder"; parentId: string; title: string }
-  | { type: "create-bookmark"; parentId: string; title: string; url: string }
-  | { type: "update-bookmark"; nodeId: string; title: string; url: string }
+  | { type: "create-bookmark"; parentId: string; title: string; url: string; tags?: Array<string | PrivateBookmarkTag> }
+  | { type: "update-bookmark"; nodeId: string; title: string; url: string; tags?: Array<string | PrivateBookmarkTag> }
   | { type: "rename-node"; nodeId: string; title: string }
   | { type: "delete-node"; nodeId: string }
-  | { type: "move-node"; nodeId: string; destinationFolderId: string };
+  | { type: "move-node"; nodeId: string; destinationFolderId: string }
+  | { type: "dedupe-bookmarks" };
 
 export type RuntimeMessage =
   | { type: "onesync:get-popup-state" }

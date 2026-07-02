@@ -1,13 +1,20 @@
 import { z } from "zod";
 import { BundleValidationError } from "../shared/errors";
+import { normalizePrivateBookmarkTags } from "../private-bookmarks/tags";
 
 const isoDateTimeSchema = z.iso.datetime({ offset: true });
+
+const bookmarkTagSchema = z.object({
+  text: z.string().min(1),
+  color: z.string().regex(/^#[0-9a-f]{6}$/u)
+});
 
 const bookmarkLeafNodeSchema = z.object({
   id: z.string().min(1),
   type: z.literal("bookmark"),
   title: z.string(),
   url: z.url(),
+  tags: z.array(z.union([z.string(), bookmarkTagSchema])).optional(),
   addedAt: isoDateTimeSchema,
   updatedAt: isoDateTimeSchema
 });
@@ -125,6 +132,8 @@ export function normalizeBundle(bundle: BookmarkBundle): BookmarkBundle {
           ];
         }
 
+        const tags = normalizePrivateBookmarkTags(node.tags);
+
         return [
           nodeId,
           {
@@ -132,6 +141,7 @@ export function normalizeBundle(bundle: BookmarkBundle): BookmarkBundle {
             type: "bookmark" as const,
             title: node.title,
             url: node.url,
+            ...(tags.length > 0 ? { tags } : {}),
             addedAt: node.addedAt,
             updatedAt: node.updatedAt
           }

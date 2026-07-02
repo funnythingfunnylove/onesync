@@ -17,6 +17,9 @@ vi.mock("wxt/browser", () => ({
 import {
   buildPrivateBookmarkManagerViewModel,
   buildPrivateBookmarkEditDraft,
+  dedupePrivateBookmarksAndSync,
+  filterPrivateBookmarkManagerNodes,
+  getPrivateBookmarkTagOptions,
   getPrivateBookmarkLinkHref,
   loadPrivateBookmarksViewState,
   mutatePrivateBookmarks,
@@ -65,6 +68,7 @@ const samplePrivateState: PrivateBookmarksViewState = {
         type: "bookmark",
         title: "Docs",
         url: "https://example.com/docs",
+        tags: ["work"],
         depth: 1,
         children: []
       }
@@ -83,14 +87,15 @@ const samplePrivateState: PrivateBookmarksViewState = {
           title: "Folder A",
           depth: 1,
           children: [
-            {
-              id: "bookmark-2",
-              type: "bookmark",
-              title: "Nested docs",
-              url: "https://example.com/nested",
-              depth: 2,
-              children: []
-            }
+              {
+                id: "bookmark-2",
+                type: "bookmark",
+                title: "Nested docs",
+                url: "https://example.com/nested",
+                tags: ["design"],
+                depth: 2,
+                children: []
+              }
           ]
         },
         {
@@ -105,6 +110,7 @@ const samplePrivateState: PrivateBookmarksViewState = {
           type: "bookmark",
           title: "Docs",
           url: "https://example.com/docs",
+          tags: ["work"],
           depth: 1,
           children: []
         }
@@ -159,7 +165,7 @@ describe("options view-model", () => {
     });
   });
 
-  it("builds folder-scoped bookmark manager data without view tabs", () => {
+  it("builds flat bookmark manager data without view tabs", () => {
     const viewModel = buildPrivateBookmarkManagerViewModel(samplePrivateState, {
       selectedNodeId: "bookmark-1"
     });
@@ -178,111 +184,222 @@ describe("options view-model", () => {
     );
     expect(viewModel.visibleNodes).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ id: "folder-a", type: "folder", childCount: 1 }),
-        expect.objectContaining({ id: "bookmark-1", type: "bookmark", isSelected: true, childCount: 0 })
+        expect.objectContaining({
+          id: "bookmark-2",
+          type: "bookmark",
+          parentFolderId: "folder-a",
+          parentFolderTitle: "Folder A",
+          tags: [{ text: "design", color: "#eee9f3" }],
+          childCount: 0
+        }),
+        expect.objectContaining({
+          id: "bookmark-1",
+          type: "bookmark",
+          parentFolderId: "root-toolbar",
+          parentFolderTitle: "Bookmarks Bar",
+          tags: [{ text: "work", color: "#e8f1eb" }],
+          isSelected: true,
+          childCount: 0
+        })
       ])
     );
+    expect(viewModel.visibleNodes.every((node) => node.type === "bookmark")).toBe(true);
     expect(viewModel.actions.rename.disabled).toBe(false);
     expect(viewModel.actions.delete.disabled).toBe(false);
-    expect(viewModel.actions.move.disabled).toBe(false);
-    expect(viewModel.moveDestinations).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ id: "root-toolbar", isSelected: true }),
-        expect.objectContaining({ id: "folder-b", isSelected: false })
-      ])
-    );
+    expect("createFolder" in viewModel.actions).toBe(false);
+    expect("move" in viewModel.actions).toBe(false);
+    expect("moveDestinations" in viewModel).toBe(false);
   });
 
-  it("uses a selected folder node as the folder and action context even when the previous folder differs", () => {
+  it("builds a flat all-bookmarks list instead of folder-scoped rows", () => {
     const viewModel = buildPrivateBookmarkManagerViewModel(samplePrivateState, {
-      selectedFolderId: "root-toolbar",
-      selectedNodeId: "folder-a"
+      selectedNodeId: "bookmark-2"
     });
 
     expect(viewModel.selectedFolder).toMatchObject({
       id: "folder-a",
       title: "Folder A"
     });
-    expect(viewModel.selectedNode).toMatchObject({
-      id: "folder-a",
-      type: "folder",
-      childCount: 1
-    });
-    expect(viewModel.folderEntries).toEqual(
-      expect.arrayContaining([expect.objectContaining({ id: "folder-a", isSelected: true })])
-    );
     expect(viewModel.visibleNodes).toEqual([
       expect.objectContaining({
         id: "bookmark-2",
-        type: "bookmark"
+        type: "bookmark",
+        title: "Nested docs",
+        parentFolderId: "folder-a",
+        parentFolderTitle: "Folder A",
+        isSelected: true
+      }),
+      expect.objectContaining({
+        id: "bookmark-1",
+        type: "bookmark",
+        title: "Docs",
+        parentFolderId: "root-toolbar",
+        parentFolderTitle: "Bookmarks Bar",
+        isSelected: false
       })
     ]);
-    expect(viewModel.moveDestinations).toEqual([
-      expect.objectContaining({ id: "root-toolbar", isSelected: false }),
-      expect.objectContaining({ id: "folder-b", isSelected: false })
+    expect(viewModel.visibleNodes.every((node) => node.type === "bookmark")).toBe(true);
+    expect(viewModel.actions.dedupe.disabled).toBe(false);
+  });
+
+  it("filters flat bookmark manager nodes by query without folder text", () => {
+    const viewModel = buildPrivateBookmarkManagerViewModel(
+      {
+        ...samplePrivateState,
+        tree: [
+          {
+            id: "root-toolbar",
+            type: "folder",
+            title: "Bookmarks Bar",
+            depth: 0,
+            children: [
+              {
+                id: "folder-a",
+                type: "folder",
+                title: "Hidden folder text",
+                depth: 1,
+                children: [
+                  {
+                    id: "bookmark-2",
+                    type: "bookmark",
+                    title: "Nested docs",
+                    url: "https://example.com/nested",
+                    depth: 2,
+                    children: []
+                  }
+                ]
+              },
+              {
+                id: "bookmark-internal",
+                type: "bookmark",
+                title: "DNS tools",
+                url: "chrome://net-internals/#dns",
+                depth: 1,
+                children: []
+              }
+            ]
+          }
+        ]
+      },
+      {}
+    );
+
+    expect(
+      filterPrivateBookmarkManagerNodes(viewModel.visibleNodes, {
+        query: "hidden",
+        tagId: "all"
+      })
+    ).toEqual([]);
+  });
+
+  it("filters flat bookmark manager nodes by tag", () => {
+    const viewModel = buildPrivateBookmarkManagerViewModel(samplePrivateState, {});
+
+    expect(
+      filterPrivateBookmarkManagerNodes(viewModel.visibleNodes, {
+        query: "",
+        tagId: "work"
+      }).map((node) => node.id)
+    ).toEqual(["bookmark-1"]);
+    expect(
+      filterPrivateBookmarkManagerNodes(viewModel.visibleNodes, {
+        query: "",
+        tagId: "design"
+      }).map((node) => node.id)
+    ).toEqual(["bookmark-2"]);
+    const customTaggedViewModel = buildPrivateBookmarkManagerViewModel(
+      {
+        ...samplePrivateState,
+        tree: [
+          {
+            ...samplePrivateState.tree[0],
+            children: [
+              {
+                id: "bookmark-custom",
+                type: "bookmark",
+                title: "Custom tag docs",
+                url: "https://example.com/custom",
+                tags: ["learning queue"],
+                depth: 1,
+                children: []
+              }
+            ]
+          }
+        ]
+      },
+      {}
+    );
+    expect(
+      filterPrivateBookmarkManagerNodes(customTaggedViewModel.visibleNodes, {
+        query: "",
+        tagId: "learning queue"
+      }).map((node) => node.id)
+    ).toEqual(["bookmark-custom"]);
+    expect(
+      filterPrivateBookmarkManagerNodes(viewModel.visibleNodes, {
+        query: "docs",
+        tagId: "untagged"
+      })
+    ).toEqual([]);
+  });
+
+  it("exposes used preset and custom tag filters with palette colors", () => {
+    const viewModel = buildPrivateBookmarkManagerViewModel(
+      {
+        ...samplePrivateState,
+        tree: [
+          {
+            ...samplePrivateState.tree[0],
+            children: [
+              ...samplePrivateState.tree[0].children,
+              {
+                id: "bookmark-custom",
+                type: "bookmark",
+                title: "Custom tag docs",
+                url: "https://example.com/custom",
+                tags: ["learning queue"],
+                depth: 1,
+                children: []
+              }
+            ]
+          }
+        ]
+      },
+      {}
+    );
+
+    expect(viewModel.tagOptions).toEqual([
+      expect.objectContaining({ id: "all", label: "All tags" }),
+      expect.objectContaining({ id: "work", label: "Work", colorClass: "tag-color-work" }),
+      expect.objectContaining({ id: "design", label: "Design", colorClass: "tag-color-design" }),
+      expect.objectContaining({ id: "learning queue", label: "learning queue", colorClass: expect.stringMatching(/^tag-color-custom-/) })
     ]);
-  });
-
-  it("keeps the parent folder visible when editing a folder row inline", () => {
-    const viewModel = buildPrivateBookmarkManagerViewModel(samplePrivateState, {
-      selectedFolderId: "root-toolbar",
-      selectedNodeId: "folder-a",
-      editingNodeId: "folder-a"
-    });
-
-    expect(viewModel.selectedFolder).toMatchObject({
-      id: "root-toolbar",
-      title: "Bookmarks Bar"
-    });
-    expect(viewModel.selectedNode).toMatchObject({
-      id: "folder-a",
-      type: "folder",
-      isSelected: true
-    });
-    expect(viewModel.visibleNodes).toEqual(
+    expect(getPrivateBookmarkTagOptions(["work", "Learning Queue"])).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({
-          id: "folder-a",
-          type: "folder",
-          isSelected: true
-        }),
-        expect.objectContaining({
-          id: "bookmark-1",
-          type: "bookmark"
-        })
+        expect.objectContaining({ id: "work", colorClass: "tag-color-work" }),
+        expect.objectContaining({ id: "learning queue", label: "learning queue" })
       ])
     );
   });
 
-  it("keeps the parent folder visible after saving a folder rename when parent context is preserved", () => {
-    const viewModel = buildPrivateBookmarkManagerViewModel(samplePrivateState, {
-      selectedFolderId: "root-toolbar",
-      selectedFolderContextId: "root-toolbar",
-      selectedNodeId: "folder-a"
-    });
+  it("deduplicates private bookmarks and then requests sync", async () => {
+    sendMessageMock
+      .mockResolvedValueOnce(samplePrivateState)
+      .mockResolvedValueOnce(undefined);
 
-    expect(viewModel.selectedFolder).toMatchObject({
-      id: "root-toolbar",
-      title: "Bookmarks Bar"
+    await expect(dedupePrivateBookmarksAndSync()).resolves.toBe(samplePrivateState);
+
+    expect(sendMessageMock).toHaveBeenNthCalledWith(1, {
+      type: "onesync:mutate-private-bookmarks",
+      payload: {
+        operation: {
+          type: "dedupe-bookmarks"
+        }
+      }
     });
-    expect(viewModel.selectedNode).toMatchObject({
-      id: "folder-a",
-      type: "folder",
-      isSelected: true
+    expect(sendMessageMock).toHaveBeenNthCalledWith(2, {
+      type: "onesync:sync-now"
     });
-    expect(viewModel.visibleNodes).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          id: "folder-a",
-          type: "folder",
-          isSelected: true
-        }),
-        expect.objectContaining({
-          id: "bookmark-1",
-          type: "bookmark"
-        })
-      ])
-    );
   });
 
   it("uses the selected bookmark parent folder as the action context instead of a stale folder selection", () => {
@@ -307,73 +424,25 @@ describe("options view-model", () => {
         expect.objectContaining({ id: "root-toolbar", isSelected: false })
       ])
     );
-    expect(viewModel.visibleNodes).toEqual([
-      expect.objectContaining({
-        id: "bookmark-2",
-        type: "bookmark",
-        isSelected: true
-      })
-    ]);
-    expect(viewModel.moveDestinations).toEqual(
-      expect.arrayContaining([expect.objectContaining({ id: "folder-a", isSelected: true })])
+    expect(viewModel.visibleNodes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "bookmark-2",
+          type: "bookmark",
+          isSelected: true
+        }),
+        expect.objectContaining({
+          id: "bookmark-1",
+          type: "bookmark",
+          isSelected: false
+        })
+      ])
     );
-    expect(viewModel.actions.createFolder.disabled).toBe(false);
+    expect("createFolder" in viewModel.actions).toBe(false);
     expect(viewModel.actions.createBookmark.disabled).toBe(false);
   });
 
-  it("filters invalid move destinations so folders cannot target themselves or descendants", () => {
-    const viewModel = buildPrivateBookmarkManagerViewModel(
-      {
-        ...samplePrivateState,
-        folders: [
-          { id: "root-toolbar", title: "Bookmarks Bar", depth: 0 },
-          { id: "folder-a", title: "Folder A", depth: 1 },
-          { id: "folder-c", title: "Folder C", depth: 2 },
-          { id: "folder-b", title: "Folder B", depth: 1 }
-        ],
-        tree: [
-          {
-            id: "root-toolbar",
-            type: "folder",
-            title: "Bookmarks Bar",
-            depth: 0,
-            children: [
-              {
-                id: "folder-a",
-                type: "folder",
-                title: "Folder A",
-                depth: 1,
-                children: [
-                  {
-                    id: "folder-c",
-                    type: "folder",
-                    title: "Folder C",
-                    depth: 2,
-                    children: []
-                  }
-                ]
-              },
-              {
-                id: "folder-b",
-                type: "folder",
-                title: "Folder B",
-                depth: 1,
-                children: []
-              }
-            ]
-          }
-        ]
-      },
-      {
-        selectedNodeId: "folder-a"
-      }
-    );
-
-    expect(viewModel.moveDestinations.map((folder) => folder.id)).toEqual(["root-toolbar", "folder-b"]);
-    expect(viewModel.actions.move.disabled).toBe(false);
-  });
-
-  it("protects root folders for unavailable runtimes in folder-scoped mode", () => {
+  it("disables bookmark mutations for unavailable runtimes in flat mode", () => {
     const viewModel = buildPrivateBookmarkManagerViewModel(
       {
         ...samplePrivateState,
@@ -392,15 +461,16 @@ describe("options view-model", () => {
     });
     expect(viewModel.visibleNodes).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ id: "folder-a", type: "folder", childCount: 1 }),
+        expect.objectContaining({ id: "bookmark-2", type: "bookmark", childCount: 0 }),
         expect.objectContaining({ id: "bookmark-1", type: "bookmark", childCount: 0 })
       ])
     );
-    expect(viewModel.actions.createFolder.disabled).toBe(true);
+    expect("createFolder" in viewModel.actions).toBe(false);
     expect(viewModel.actions.createBookmark.disabled).toBe(true);
     expect(viewModel.actions.rename.disabled).toBe(true);
-    expect(viewModel.actions.move.disabled).toBe(true);
+    expect("move" in viewModel.actions).toBe(false);
     expect(viewModel.actions.delete.disabled).toBe(true);
+    expect(viewModel.actions.dedupe.disabled).toBe(true);
   });
 
   it("surfaces browser-specific mode hints without changing manager counts", () => {
@@ -541,9 +611,13 @@ describe("options view-model", () => {
       ok: true,
       value: "https://example.com/docs"
     });
+    expect(validatePrivateBookmarkUrl("chrome://net-internals/#dns")).toEqual({
+      ok: true,
+      value: "chrome://net-internals/#dns"
+    });
     expect(validatePrivateBookmarkUrl("javascript:alert(1)")).toEqual({
       ok: false,
-      message: "Bookmark URL must start with http:// or https://."
+      message: "Bookmark URL uses an unsupported scheme."
     });
     expect(validatePrivateBookmarkUrl("not a url")).toEqual({
       ok: false,
@@ -554,6 +628,7 @@ describe("options view-model", () => {
   it("uses the same URL scheme policy for direct bookmark links as create and edit validation", () => {
     expect(getPrivateBookmarkLinkHref("https://example.com/docs")).toBe("https://example.com/docs");
     expect(getPrivateBookmarkLinkHref("http://example.com/docs")).toBe("http://example.com/docs");
+    expect(getPrivateBookmarkLinkHref("chrome://net-internals/#dns")).toBe("chrome://net-internals/#dns");
     expect(getPrivateBookmarkLinkHref("javascript:alert(1)")).toBeNull();
     expect(getPrivateBookmarkLinkHref("data:text/html,hello")).toBeNull();
     expect(getPrivateBookmarkLinkHref("not a url")).toBeNull();
@@ -563,13 +638,36 @@ describe("options view-model", () => {
     const formData = new FormData();
     formData.set("title", "Unsaved title");
     formData.set("url", "https://draft.example.com/");
+    formData.set("tags", "work");
+    formData.append("tags", "design");
+    formData.set("customTag", "Learning Queue");
+    formData.set("customTagColor", "#f1e7e7");
 
     expect(buildPrivateBookmarkEditDraft("bookmark", formData)).toEqual({
       title: "Unsaved title",
-      url: "https://draft.example.com/"
+      url: "https://draft.example.com/",
+      tags: [
+        { text: "work", color: "#e8f1eb" },
+        { text: "design", color: "#eee9f3" },
+        { text: "learning queue", color: "#f1e7e7" }
+      ]
     });
     expect(buildPrivateBookmarkEditDraft("folder", formData)).toEqual({
       title: "Unsaved title"
+    });
+  });
+
+  it("keeps existing custom tag colors when an edited bookmark is saved", () => {
+    const formData = new FormData();
+    formData.set("title", "Colorful draft");
+    formData.set("url", "https://draft.example.com/");
+    formData.set("tags", "learning queue");
+    formData.set("tagColor:learning queue", "#f1e7e7");
+
+    expect(buildPrivateBookmarkEditDraft("bookmark", formData)).toEqual({
+      title: "Colorful draft",
+      url: "https://draft.example.com/",
+      tags: [{ text: "learning queue", color: "#f1e7e7" }]
     });
   });
 });

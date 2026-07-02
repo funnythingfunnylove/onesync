@@ -66,6 +66,14 @@ function requireFolder(node: BookmarkNode): Extract<BookmarkNode, { type: "folde
   return node;
 }
 
+function requireBookmark(node: BookmarkNode): Extract<BookmarkNode, { type: "bookmark" }> {
+  if (node.type !== "bookmark") {
+    throw new Error("Expected a bookmark node");
+  }
+
+  return node;
+}
+
 describe("mergeBundles", () => {
   it("prefers the newer updatedAt when both sides changed the same bookmark", () => {
     const base = createBundle();
@@ -96,6 +104,42 @@ describe("mergeBundles", () => {
     expect(merged.nodes["bookmark-1"]).toMatchObject({
       title: "Remote Title",
       updatedAt: "2026-06-30T12:02:00.000Z"
+    });
+  });
+
+  it("preserves bookmark tag changes as part of the newer bookmark node", () => {
+    const base = createBundle();
+    const baseBookmark = requireBookmark(base.nodes["bookmark-1"]);
+    const local = createBundle({
+      nodes: {
+        ...base.nodes,
+        "bookmark-1": {
+          ...baseBookmark,
+          tags: ["work", "learning queue"],
+          updatedAt: "2026-06-30T12:03:00.000Z"
+        }
+      }
+    });
+    const remote = createBundle({
+      nodes: {
+        ...base.nodes,
+        "bookmark-1": {
+          ...baseBookmark,
+          title: "Example",
+          updatedAt: "2026-06-30T12:01:00.000Z"
+        }
+      }
+    });
+
+    const merged = mergeBundles(base, local, remote);
+
+    expect(merged.nodes["bookmark-1"]).toMatchObject({
+      title: "Example",
+      tags: [
+        { text: "work", color: "#e8f1eb" },
+        { text: "learning queue", color: expect.stringMatching(/^#[0-9a-f]{6}$/u) }
+      ],
+      updatedAt: "2026-06-30T12:03:00.000Z"
     });
   });
 
@@ -267,5 +311,74 @@ describe("mergeBundles", () => {
 
     expect(toolbarRoot.children).toEqual([]);
     expect(menuRoot.children).toEqual(["bookmark-1", "bookmark-3", "bookmark-4"]);
+  });
+
+  it("folds the same bookmark URL from different devices into one bookmark during merge", () => {
+    const base = createBundle({
+      nodes: {
+        ...createBundle().nodes,
+        "toolbar-root": {
+          ...requireFolder(createBundle().nodes["toolbar-root"]),
+          children: []
+        }
+      }
+    });
+    const local = createBundle({
+      generatedAt: "2026-06-30T12:03:00.000Z",
+      nodes: {
+        ...base.nodes,
+        "toolbar-root": {
+          ...requireFolder(base.nodes["toolbar-root"]),
+          children: ["local-bookmark"],
+          updatedAt: "2026-06-30T12:03:00.000Z"
+        },
+        "local-bookmark": {
+          id: "local-bookmark",
+          type: "bookmark",
+          title: "Shared Docs",
+          url: "https://example.com/docs",
+          addedAt: "2026-06-30T12:03:00.000Z",
+          updatedAt: "2026-06-30T12:03:00.000Z"
+        }
+      }
+    });
+    const remote = createBundle({
+      generatedAt: "2026-06-30T12:04:00.000Z",
+      nodes: {
+        ...base.nodes,
+        "toolbar-root": {
+          ...requireFolder(base.nodes["toolbar-root"]),
+          children: ["remote-bookmark"],
+          updatedAt: "2026-06-30T12:04:00.000Z"
+        },
+        "remote-bookmark": {
+          id: "remote-bookmark",
+          type: "bookmark",
+          title: "Shared Docs",
+          url: "https://example.com/docs",
+          tags: ["work"],
+          addedAt: "2026-06-30T12:04:00.000Z",
+          updatedAt: "2026-06-30T12:04:00.000Z"
+        }
+      }
+    });
+
+    const merged = mergeBundles(base, local, remote);
+    const toolbarRoot = requireFolder(merged.nodes["toolbar-root"]);
+
+    expect(toolbarRoot.children).toEqual(["local-bookmark"]);
+    expect(merged.nodes["local-bookmark"]).toMatchObject({
+      title: "Shared Docs",
+      url: "https://example.com/docs"
+    });
+    expect(merged.nodes["remote-bookmark"]).toBeUndefined();
+    expect(merged.tombstones).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "remote-bookmark",
+          deletedAt: "2026-06-30T12:04:00.000Z"
+        })
+      ])
+    );
   });
 });

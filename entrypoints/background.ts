@@ -56,6 +56,8 @@ function describePrivateBookmarkMutation(bundle: BookmarkBundle, operation: Priv
       const destinationTitle = destinationNode?.title ?? "selected folder";
       return `Private bookmarks: moved "${nodeTitle}" to "${destinationTitle}".`;
     }
+    case "dedupe-bookmarks":
+      return "Private bookmarks: removed duplicate bookmark URLs.";
   }
 }
 

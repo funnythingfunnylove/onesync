@@ -1,6 +1,7 @@
 import type { BookmarkBundle, BookmarkNode } from "../format/schema";
 import { countBookmarkItems } from "../format/schema";
 import type { BookmarkStorageMode } from "../browser/bookmarks";
+import { normalizePrivateBookmarkTags, type PrivateBookmarkTag } from "./tags";
 
 const ROOT_ORDER = ["toolbar", "menu", "mobile", "unfiled"] as const;
 
@@ -9,6 +10,7 @@ export type PrivateBookmarkViewNode = {
   type: BookmarkNode["type"];
   title: string;
   url?: string;
+  tags?: Array<string | PrivateBookmarkTag>;
   depth: number;
   children: PrivateBookmarkViewNode[];
 };
@@ -62,6 +64,7 @@ function projectNode(bundle: BookmarkBundle, nodeId: string, depth: number, visi
       type: node.type,
       title: node.title,
       url: node.url,
+      ...(normalizePrivateBookmarkTags(node.tags).length > 0 ? { tags: normalizePrivateBookmarkTags(node.tags) } : {}),
       depth,
       children: []
     };
@@ -110,6 +113,7 @@ function projectFolderChild(
       type: node.type,
       title: node.title,
       url: node.url,
+      ...(normalizePrivateBookmarkTags(node.tags).length > 0 ? { tags: normalizePrivateBookmarkTags(node.tags) } : {}),
       depth,
       children: []
     };

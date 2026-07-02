@@ -1,5 +1,6 @@
 import { normalizeBundle, type BookmarkBundle, type BookmarkNode } from "../format/schema";
 import type { PrivateBookmarkOperation } from "../shared/types";
+import { normalizePrivateBookmarkTags, type PrivateBookmarkTag } from "./tags";
 import { validatePrivateBookmarkUrl } from "./validation";
 
 type BookmarkTombstone = BookmarkBundle["tombstones"][number];
@@ -12,7 +13,10 @@ function cloneNode(node: BookmarkNode): BookmarkNode {
     };
   }
 
-  return { ...node };
+  return {
+    ...node,
+    ...(node.tags ? { tags: node.tags.map((tag) => typeof tag === "string" ? tag : { ...tag }) } : {})
+  };
 }
 
 function cloneBundle(bundle: BookmarkBundle): BookmarkBundle {
@@ -97,6 +101,37 @@ function collectDescendantIds(bundle: BookmarkBundle, nodeId: string, collected:
   }
 
   return descendants;
+}
+
+function collectBookmarkIdsInDisplayOrder(bundle: BookmarkBundle, nodeId: string, collected: string[], visited: Set<string>): void {
+  if (visited.has(nodeId)) {
+    return;
+  }
+
+  const node = bundle.nodes[nodeId];
+
+  if (!node) {
+    return;
+  }
+
+  visited.add(nodeId);
+
+  if (node.type === "bookmark") {
+    collected.push(nodeId);
+    return;
+  }
+
+  for (const childId of node.children) {
+    collectBookmarkIdsInDisplayOrder(bundle, childId, collected, visited);
+  }
+}
+
+function normalizeBookmarkUrlForDedupe(url: string): string {
+  try {
+    return new URL(url).href;
+  } catch {
+    return url.trim();
+  }
 }
 
 function isDescendantOf(bundle: BookmarkBundle, nodeId: string, potentialAncestorId: string): boolean {
@@ -204,6 +239,7 @@ function createBookmark(
   parentId: string,
   title: string,
   url: string,
+  tags: Array<string | PrivateBookmarkTag> | undefined,
   deviceId: string
 ): BookmarkBundle {
   const validatedUrl = validatePrivateBookmarkUrl(url);
@@ -216,12 +252,14 @@ function createBookmark(
   const parent = getFolderNode(next, parentId, "Parent");
   const generatedAt = new Date().toISOString();
   const nodeId = generateNodeId(next, deviceId, "bookmark");
+  const normalizedTags = normalizePrivateBookmarkTags(tags);
 
   next.nodes[nodeId] = {
     id: nodeId,
     type: "bookmark",
     title,
     url: validatedUrl.value,
+    ...(normalizedTags.length > 0 ? { tags: normalizedTags } : {}),
     addedAt: generatedAt,
     updatedAt: generatedAt
   };
@@ -251,6 +289,7 @@ function updateBookmark(
   nodeId: string,
   title: string,
   url: string,
+  tags: Array<string | PrivateBookmarkTag> | undefined,
   deviceId: string
 ): BookmarkBundle {
   const validatedUrl = validatePrivateBookmarkUrl(url);
@@ -267,10 +306,13 @@ function updateBookmark(
     throw new Error("Only bookmark items can update a URL");
   }
 
+  const normalizedTags = normalizePrivateBookmarkTags(tags);
+
   next.nodes[nodeId] = {
     ...node,
     title,
     url: validatedUrl.value,
+    ...(normalizedTags.length > 0 ? { tags: normalizedTags } : { tags: undefined }),
     updatedAt: generatedAt
   };
 
@@ -347,6 +389,61 @@ function moveNode(bundle: BookmarkBundle, nodeId: string, destinationFolderId: s
   return normalizeBundle(stampBundle(next, deviceId, generatedAt));
 }
 
+function dedupeBookmarks(bundle: BookmarkBundle, deviceId: string): BookmarkBundle {
+  const next = cloneBundle(bundle);
+  const generatedAt = new Date().toISOString();
+  const bookmarkIds: string[] = [];
+  const seenUrls = new Set<string>();
+  const duplicateIds = new Set<string>();
+  const visited = new Set<string>();
+
+  for (const rootId of rootIds(next)) {
+    collectBookmarkIdsInDisplayOrder(next, rootId, bookmarkIds, visited);
+  }
+
+  for (const bookmarkId of bookmarkIds) {
+    const node = next.nodes[bookmarkId];
+
+    if (!node || node.type !== "bookmark") {
+      continue;
+    }
+
+    const normalizedUrl = normalizeBookmarkUrlForDedupe(node.url);
+
+    if (seenUrls.has(normalizedUrl)) {
+      duplicateIds.add(bookmarkId);
+      continue;
+    }
+
+    seenUrls.add(normalizedUrl);
+  }
+
+  if (duplicateIds.size === 0) {
+    return normalizeBundle(stampBundle(next, deviceId, generatedAt));
+  }
+
+  for (const node of Object.values(next.nodes)) {
+    if (node.type !== "folder") {
+      continue;
+    }
+
+    const filteredChildren = node.children.filter((childId) => !duplicateIds.has(childId));
+
+    if (filteredChildren.length !== node.children.length) {
+      node.children = filteredChildren;
+      node.updatedAt = generatedAt;
+    }
+  }
+
+  for (const duplicateId of duplicateIds) {
+    delete next.nodes[duplicateId];
+  }
+
+  next.tombstones = upsertTombstones(next.tombstones, Array.from(duplicateIds), generatedAt);
+
+  return normalizeBundle(stampBundle(next, deviceId, generatedAt));
+}
+
 export function applyPrivateBookmarkOperation(
   bundle: BookmarkBundle,
   operation: PrivateBookmarkOperation,
@@ -356,14 +453,16 @@ export function applyPrivateBookmarkOperation(
     case "create-folder":
       return createFolder(bundle, operation.parentId, operation.title, deviceId);
     case "create-bookmark":
-      return createBookmark(bundle, operation.parentId, operation.title, operation.url, deviceId);
+      return createBookmark(bundle, operation.parentId, operation.title, operation.url, operation.tags, deviceId);
     case "update-bookmark":
-      return updateBookmark(bundle, operation.nodeId, operation.title, operation.url, deviceId);
+      return updateBookmark(bundle, operation.nodeId, operation.title, operation.url, operation.tags, deviceId);
     case "rename-node":
       return renameNode(bundle, operation.nodeId, operation.title, deviceId);
     case "delete-node":
       return deleteNode(bundle, operation.nodeId, deviceId);
     case "move-node":
       return moveNode(bundle, operation.nodeId, operation.destinationFolderId, deviceId);
+    case "dedupe-bookmarks":
+      return dedupeBookmarks(bundle, deviceId);
   }
 }

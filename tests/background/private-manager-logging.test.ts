@@ -200,7 +200,7 @@ const currentBundle: BookmarkBundle = {
   tombstones: [],
   meta: {
     client: "onesync",
-    clientVersion: "0.1.3"
+    clientVersion: "0.2.0"
   }
 };
 

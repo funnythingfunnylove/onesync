@@ -4,7 +4,7 @@ export default defineConfig({
   manifest: ({ browser }) => ({
     name: "onesync",
     description: "Bookmark sync over WebDAV with one shared format.",
-    version: "0.1.3",
+    version: "0.2.0",
     icons: {
       16: "icons/icon-16.png",
       32: "icons/icon-32.png",

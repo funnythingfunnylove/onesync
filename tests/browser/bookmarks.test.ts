@@ -312,7 +312,7 @@ describe("bookmark adapter", () => {
         tombstones: [],
         meta: {
           client: "onesync",
-          clientVersion: "0.1.3"
+          clientVersion: "0.2.0"
         }
       }
     });
@@ -400,7 +400,7 @@ describe("bookmark adapter", () => {
         tombstones: [],
         meta: {
           client: "onesync",
-          clientVersion: "0.1.3"
+          clientVersion: "0.2.0"
         }
       })
     ).resolves.toBeUndefined();
@@ -492,7 +492,7 @@ describe("bookmark adapter", () => {
       tombstones: [],
       meta: {
         client: "onesync",
-        clientVersion: "0.1.3"
+        clientVersion: "0.2.0"
       }
     });
 
@@ -572,7 +572,7 @@ describe("bookmark adapter", () => {
           tombstones: [],
           meta: {
             client: "onesync",
-            clientVersion: "0.1.3"
+            clientVersion: "0.2.0"
           }
         },
         "private"
@@ -642,7 +642,7 @@ describe("bookmark adapter", () => {
           tombstones: [],
           meta: {
             client: "onesync",
-            clientVersion: "0.1.3"
+            clientVersion: "0.2.0"
           }
         },
         "native"
@@ -712,7 +712,7 @@ describe("bookmark adapter", () => {
           tombstones: [],
           meta: {
             client: "onesync",
-            clientVersion: "0.1.3"
+            clientVersion: "0.2.0"
           }
         },
         "native"
@@ -770,7 +770,7 @@ describe("bookmark adapter", () => {
       tombstones: [],
       meta: {
         client: "onesync",
-        clientVersion: "0.1.3"
+        clientVersion: "0.2.0"
       }
     });
 
@@ -863,12 +863,12 @@ describe("bookmark adapter", () => {
           tombstones: [],
           meta: {
             client: "onesync",
-            clientVersion: "0.1.3"
+            clientVersion: "0.2.0"
           }
         },
         "native"
       )
-    ).rejects.toThrow(/bookmark url must start with http:\/\/ or https:\/\//i);
+    ).rejects.toThrow(/unsupported scheme/i);
 
     expect(createMock).not.toHaveBeenCalled();
     expect(storageSetMock).not.toHaveBeenCalled();
@@ -935,7 +935,7 @@ describe("bookmark adapter", () => {
         tombstones: [],
         meta: {
           client: "onesync",
-          clientVersion: "0.1.3"
+          clientVersion: "0.2.0"
         }
       })
     ).rejects.toThrow(/bookmark url must be a complete url/i);

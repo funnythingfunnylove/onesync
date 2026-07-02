@@ -91,7 +91,7 @@ a {
   position: sticky;
   top: 20px;
   display: grid;
-  gap: 18px;
+  gap: 16px;
   padding: 18px;
   border: 1px solid var(--border);
   border-radius: var(--radius-xl);
@@ -104,6 +104,10 @@ a {
 .cluster-heading {
   display: grid;
   gap: 4px;
+}
+
+.nav-brand {
+  padding: 0 0 2px;
 }
 
 .nav-label,
@@ -151,7 +155,7 @@ a {
 .nav-status-card {
   display: grid;
   gap: 10px;
-  padding: 14px;
+  padding: 16px;
   background: var(--surface-muted);
 }
 
@@ -240,12 +244,15 @@ a {
 .workspace-links {
   display: grid;
   gap: 4px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
 }
 
 .workspace-link {
   display: block;
   width: 100%;
-  padding: 10px 11px;
+  min-height: 38px;
+  padding: 9px 11px;
   border: 1px solid transparent;
   border-radius: var(--radius-md);
   background: transparent;
@@ -272,8 +279,9 @@ a {
 
 .nav-meta-list {
   display: grid;
-  gap: 10px;
-  padding-top: 2px;
+  gap: 12px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
 }
 
 .nav-meta-item {
@@ -285,6 +293,8 @@ a {
   color: var(--text);
   line-height: 1.4;
   overflow-wrap: anywhere;
+  font-family: "Geist Mono", "SF Mono", "JetBrains Mono", monospace;
+  font-size: 12px;
 }
 
 .workspace-main {
@@ -382,6 +392,10 @@ a {
   background: var(--surface);
 }
 
+.bookmark-workspace-flat {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .bookmark-pane {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
@@ -426,6 +440,79 @@ a {
   border-bottom: 1px solid var(--border);
 }
 
+.bookmark-command-bar {
+  display: grid;
+  grid-template-columns: minmax(150px, 190px) minmax(0, 1fr);
+  grid-template-areas:
+    "summary controls"
+    "summary actions";
+  gap: 8px 14px;
+  padding: 12px 14px 10px;
+  border-bottom: 1px solid var(--border);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.68), rgba(247, 246, 243, 0.72)),
+    var(--surface-muted);
+}
+
+.bookmark-command-top {
+  display: contents;
+}
+
+.bookmark-command-bottom {
+  grid-area: actions;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas: "selection create";
+  align-items: end;
+  gap: 8px 10px;
+}
+
+.bookmark-command-summary {
+  grid-area: summary;
+  display: grid;
+  align-content: center;
+  gap: 3px;
+  min-width: 0;
+  padding-right: 4px;
+}
+
+.bookmark-command-controls,
+.bookmark-command-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 7px;
+  min-width: 0;
+}
+
+.bookmark-command-controls {
+  grid-area: controls;
+  justify-content: flex-start;
+}
+
+.bookmark-command-group-selection {
+  grid-area: selection;
+  justify-content: flex-start;
+}
+
+.bookmark-command-group-create {
+  grid-area: create;
+  justify-content: flex-end;
+}
+
+.command-icon {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+  stroke-width: 2;
+}
+
+.bookmark-field-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
 .bookmark-pane-body {
   min-height: 0;
   overflow: auto;
@@ -436,7 +523,7 @@ a {
 }
 
 .bookmark-pane-body-main {
-  padding: 10px 12px 14px;
+  padding: 8px 10px 12px;
 }
 
 .bookmark-pane-body-inspector {
@@ -479,29 +566,235 @@ a {
   align-items: end;
 }
 
-.bookmark-search-field {
+.bookmark-search-field,
+.bookmark-filter-field {
   display: grid;
   gap: 4px;
-  min-width: min(320px, 100%);
 }
 
 .bookmark-search-field input,
+.bookmark-filter-field select,
+.bookmark-custom-tag-field input,
 .private-node-inline-input {
   width: 100%;
   min-width: 0;
-  padding: 9px 10px;
+  padding: 8px 9px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--surface);
   color: var(--text);
 }
 
-.bookmark-search-field input {
-  min-width: min(320px, 100%);
+.bookmark-search-field {
+  min-width: min(360px, 100%);
+  flex: 1 1 360px;
 }
 
-.bookmark-move-field {
-  min-width: 200px;
+.bookmark-filter-field {
+  min-width: 150px;
+  flex: 0 1 180px;
+}
+
+.bookmark-select-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1;
+}
+
+.bookmark-select-all input,
+.private-node-select input {
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  accent-color: var(--blue-text);
+}
+
+.bookmark-selection-count {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 0 8px;
+  border: 1px solid rgba(31, 108, 159, 0.2);
+  border-radius: var(--radius-md);
+  background: rgba(31, 108, 159, 0.07);
+  color: var(--blue-text);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.bookmark-tag-list,
+.bookmark-tag-picker-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  min-width: 0;
+}
+
+.bookmark-tag {
+  display: inline-flex;
+  align-items: center;
+  min-height: 17px;
+  width: fit-content;
+  padding: 0 5px;
+  border: 1px solid var(--tag-border, var(--border));
+  border-radius: var(--radius-sm);
+  background: var(--tag-bg, var(--surface-muted));
+  color: var(--tag-text, var(--muted));
+  font-size: 9.5px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.bookmark-tag-picker {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  margin: 0;
+  padding: 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-muted);
+}
+
+.bookmark-tag-picker legend {
+  padding: 0 4px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.bookmark-tag-choice {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--tag-border, var(--border));
+  border-radius: var(--radius-sm);
+  background: var(--tag-bg, var(--surface));
+  color: var(--tag-text, var(--text));
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.bookmark-tag-choice input {
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  accent-color: var(--tag-text, var(--blue-text));
+}
+
+.bookmark-custom-tag-field {
+  display: grid;
+  gap: 4px;
+}
+
+.bookmark-custom-tag-inputs {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 34px;
+  gap: 6px;
+}
+
+.bookmark-custom-tag-field .bookmark-custom-tag-color {
+  min-width: 34px;
+  width: 34px;
+  padding: 2px;
+  cursor: pointer;
+}
+
+.bookmark-custom-tag-field span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.tag-color-all,
+.tag-color-untagged {
+  --tag-bg: #f1f0ec;
+  --tag-border: #dfddd6;
+  --tag-text: #6d6a63;
+}
+
+.tag-color-work {
+  --tag-bg: #e8f1eb;
+  --tag-border: #cbdccc;
+  --tag-text: #386143;
+}
+
+.tag-color-read-later {
+  --tag-bg: #f3ecd9;
+  --tag-border: #ded0aa;
+  --tag-text: #7a5a1d;
+}
+
+.tag-color-design {
+  --tag-bg: #eee9f3;
+  --tag-border: #d6c9e0;
+  --tag-text: #634c75;
+}
+
+.tag-color-dev {
+  --tag-bg: #e4eef4;
+  --tag-border: #c7d8e1;
+  --tag-text: #315c74;
+}
+
+.tag-color-research {
+  --tag-bg: #f0e7e1;
+  --tag-border: #dec9bd;
+  --tag-text: #795341;
+}
+
+.tag-color-tool {
+  --tag-bg: #e8ece2;
+  --tag-border: #d1d8c7;
+  --tag-text: #526238;
+}
+
+.tag-color-custom-0 {
+  --tag-bg: #eaf0ec;
+  --tag-border: #ccd9d0;
+  --tag-text: #3f644e;
+}
+
+.tag-color-custom-1 {
+  --tag-bg: #f1eadf;
+  --tag-border: #dacbb6;
+  --tag-text: #73583b;
+}
+
+.tag-color-custom-2 {
+  --tag-bg: #e7eef2;
+  --tag-border: #c8d7de;
+  --tag-text: #365d70;
+}
+
+.tag-color-custom-3 {
+  --tag-bg: #f1e7e7;
+  --tag-border: #dcc8c8;
+  --tag-text: #744c4c;
+}
+
+.tag-color-custom-4 {
+  --tag-bg: #eceaf2;
+  --tag-border: #d2cce0;
+  --tag-text: #584d74;
+}
+
+.tag-color-custom-5 {
+  --tag-bg: #e8ece5;
+  --tag-border: #cfd8c9;
+  --tag-text: #4f623f;
 }
 
 .private-folder-list,
@@ -516,7 +809,7 @@ a {
 
 .private-node-list {
   display: grid;
-  gap: 8px;
+  gap: 3px;
   min-height: 0;
   margin: 0;
   padding: 0;
@@ -524,32 +817,47 @@ a {
 }
 
 .private-node-row {
-  display: block;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: stretch;
+  gap: 4px;
+}
+
+.private-node-select {
+  display: grid;
+  place-items: start center;
+  padding-top: 7px;
 }
 
 .private-node-card {
   border: 1px solid var(--border);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   background: var(--surface);
 }
 
 .private-node-card.is-selected {
-  border-color: var(--border);
-  box-shadow: inset 2px 0 0 var(--text);
+  border-color: rgba(31, 108, 159, 0.28);
+  background: rgba(31, 108, 159, 0.045);
+  box-shadow: inset 2px 0 0 var(--blue-text);
+}
+
+.private-node-row.is-checked .private-node-card {
+  border-color: rgba(31, 108, 159, 0.34);
+  background: rgba(31, 108, 159, 0.045);
 }
 
 .private-node-surface,
 .private-node-editor-form {
   display: grid;
-  gap: 10px;
-  padding: 4px 8px;
+  gap: 6px;
+  padding: 3px 6px;
 }
 
 .private-node-surface {
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1.15fr) minmax(120px, 0.85fr) auto;
   align-items: center;
-  gap: 12px;
-  padding: 10px 12px;
+  gap: 6px;
+  padding: 4px 7px;
 }
 
 .private-node-editor-fields {
@@ -570,6 +878,7 @@ a {
 .private-folder-button,
 .private-node-button {
   display: grid;
+  gap: 6px;
   width: auto;
   min-width: 0;
   padding: 0;
@@ -597,13 +906,19 @@ a {
 }
 
 .private-folder-button:hover,
-.private-node-button:hover,
 .secondary-button:hover {
   background: rgba(247, 246, 243, 0.9);
 }
 
-.private-folder-button.is-selected,
-.private-node-button.is-selected {
+.private-node-card:hover {
+  background: rgba(247, 246, 243, 0.72);
+}
+
+.private-node-card.is-selected:hover {
+  background: rgba(31, 108, 159, 0.06);
+}
+
+.private-folder-button.is-selected {
   border-color: rgba(31, 108, 159, 0.28);
   background: linear-gradient(90deg, rgba(31, 108, 159, 0.08), rgba(31, 108, 159, 0.02));
   box-shadow: inset 3px 0 0 var(--blue-text);
@@ -637,19 +952,19 @@ a {
 }
 
 .private-folder-button.is-selected .private-folder-title,
-.private-node-button.is-selected .private-folder-title {
+.private-node-button.is-selected .private-node-title {
   font-weight: 600;
 }
 
 .private-node-header {
   display: grid;
-  gap: 3px;
+  gap: 1px;
   min-width: 0;
 }
 
 .private-node-title {
-  font-size: 13px;
-  line-height: 1.35;
+  font-size: 12px;
+  line-height: 1.2;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -667,7 +982,7 @@ a {
   display: inline-flex;
   flex-wrap: nowrap;
   justify-content: flex-end;
-  gap: 6px;
+  gap: 5px;
 }
 
 .private-node-meta {
@@ -684,8 +999,8 @@ a {
   color: var(--blue-text);
   text-decoration: none;
   font-family: "SF Mono", "Geist Mono", "JetBrains Mono", monospace;
-  font-size: 11px;
-  line-height: 1.45;
+  font-size: 10px;
+  line-height: 1.25;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -824,6 +1139,10 @@ a {
 
 .primary-button,
 .secondary-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   min-height: 34px;
   padding: 0 12px;
   border-radius: var(--radius-md);
@@ -851,8 +1170,12 @@ a {
 }
 
 .compact-button {
-  min-height: 30px;
-  padding: 0 10px;
+  min-height: 26px;
+  padding: 0 8px;
+}
+
+.icon-button {
+  white-space: nowrap;
 }
 
 .primary-button:disabled,
@@ -943,6 +1266,11 @@ a {
 .private-node-link:focus-visible,
 .secondary-button:focus-visible,
 .bookmark-search-field input:focus-visible,
+.bookmark-filter-field select:focus-visible,
+.bookmark-custom-tag-field input:focus-visible,
+.bookmark-select-all input:focus-visible,
+.bookmark-tag-choice input:focus-visible,
+.private-node-select input:focus-visible,
 .private-node-inline-input:focus-visible,
 .form-grid input:focus-visible,
 .form-grid select:focus-visible,
@@ -1019,16 +1347,35 @@ a {
 
   .section-header,
   .bookmark-pane-header-main,
-  .bookmark-toolbar-row {
+  .bookmark-toolbar-row,
+  .bookmark-command-bar,
+  .bookmark-command-bottom {
     display: grid;
+    grid-template-columns: 1fr;
     align-items: start;
     gap: 12px;
   }
 
+  .bookmark-command-bar {
+    grid-template-areas:
+      "summary"
+      "controls"
+      "actions";
+  }
+
+  .bookmark-command-top {
+    display: contents;
+  }
+
+  .bookmark-command-bottom {
+    grid-template-areas:
+      "selection"
+      "create";
+  }
+
   .section-summary,
   .bookmark-context-chip,
-  .bookmark-search-field,
-  .bookmark-move-field {
+  .bookmark-search-field {
     min-width: 0;
   }
 
@@ -1040,9 +1387,24 @@ a {
     justify-content: stretch;
   }
 
+  .bookmark-command-controls,
+  .bookmark-command-group {
+    justify-content: stretch;
+  }
+
   .private-node-surface {
-    grid-template-columns: 1fr;
-    align-items: start;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+  }
+
+  .private-node-link {
+    grid-column: 1 / -1;
+  }
+
+  .private-node-row-actions {
+    grid-column: 2;
+    grid-row: 1;
+    justify-self: end;
   }
 
   .bookmark-search-field input {
@@ -1095,6 +1457,16 @@ a {
     display: grid;
   }
 
+  .bookmark-command-controls,
+  .bookmark-command-group {
+    display: grid;
+  }
+
+  .bookmark-search-field,
+  .bookmark-filter-field {
+    min-width: 0;
+  }
+
   .bookmark-workspace {
     grid-template-columns: 1fr;
     min-height: auto;
@@ -1111,5 +1483,20 @@ a {
 
   .private-node-row-actions .secondary-button {
     width: auto;
+  }
+
+  .private-node-row {
+    grid-template-columns: 18px minmax(0, 1fr);
+    gap: 4px;
+  }
+
+  .private-node-surface {
+    grid-template-columns: 1fr;
+  }
+
+  .private-node-row-actions {
+    grid-column: auto;
+    grid-row: auto;
+    justify-self: start;
   }
 }

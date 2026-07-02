@@ -4,6 +4,14 @@ import {
   validatePrivateBookmarkUrl,
   type BookmarkUrlValidationResult
 } from "../../core/private-bookmarks/validation";
+import {
+  PRIVATE_BOOKMARK_TAGS,
+  getPrivateBookmarkTagOption,
+  normalizePrivateBookmarkTagTexts,
+  normalizePrivateBookmarkTags,
+  type PrivateBookmarkTag,
+  type PrivateBookmarkTagOption
+} from "../../core/private-bookmarks/tags";
 import type { SyncConfig } from "../../core/state/config";
 import { validateSyncConfigForSync } from "../../core/state/config-validation";
 import type { PrivateBookmarkOperation, RuntimeMessage } from "../../core/shared/types";
@@ -31,9 +39,12 @@ export type PrivateBookmarkManagerNode = {
   type: PrivateBookmarkViewNode["type"];
   title: string;
   url?: string;
+  tags: PrivateBookmarkTag[];
   depth: number;
   isSelected: boolean;
   childCount: number;
+  parentFolderId: string | null;
+  parentFolderTitle: string | null;
 };
 
 export type PrivateBookmarkManagerFolderEntry = {
@@ -48,6 +59,8 @@ export type PrivateBookmarkManagerActionState = {
   disabled: boolean;
 };
 
+export type PrivateBookmarkFilterMode = string;
+
 export type PrivateBookmarkManagerViewModel = {
   mode: BookmarkStorageMode;
   modeHint: string;
@@ -56,13 +69,12 @@ export type PrivateBookmarkManagerViewModel = {
   selectedNode: PrivateBookmarkManagerNode | null;
   folderEntries: PrivateBookmarkManagerFolderEntry[];
   visibleNodes: PrivateBookmarkManagerNode[];
-  moveDestinations: PrivateBookmarkManagerFolderEntry[];
+  tagOptions: PrivateBookmarkTagOption[];
   actions: {
-    createFolder: PrivateBookmarkManagerActionState;
     createBookmark: PrivateBookmarkManagerActionState;
     rename: PrivateBookmarkManagerActionState;
-    move: PrivateBookmarkManagerActionState;
     delete: PrivateBookmarkManagerActionState;
+    dedupe: PrivateBookmarkManagerActionState;
   };
 };
 
@@ -74,7 +86,75 @@ type TreeNodeLocation = {
 export type PrivateBookmarkEditDraft = {
   title: string;
   url?: string;
+  tags?: PrivateBookmarkTag[];
 };
+
+function matchesPrivateBookmarkTagFilter(node: PrivateBookmarkManagerNode, tagId: PrivateBookmarkFilterMode): boolean {
+  const tagTexts = normalizePrivateBookmarkTagTexts(node.tags);
+
+  if (tagId === "all") {
+    return true;
+  }
+
+  if (tagId === "untagged") {
+    return tagTexts.length === 0;
+  }
+
+  return tagTexts.includes(tagId);
+}
+
+export function filterPrivateBookmarkManagerNodes(
+  nodes: PrivateBookmarkManagerNode[],
+  options: {
+    query: string;
+    tagId: PrivateBookmarkFilterMode;
+  }
+): PrivateBookmarkManagerNode[] {
+  const normalizedQuery = options.query.trim().toLowerCase();
+
+  return nodes.filter((node) => {
+    if (!matchesPrivateBookmarkTagFilter(node, options.tagId)) {
+      return false;
+    }
+
+    if (!normalizedQuery) {
+      return true;
+    }
+
+    return [node.title, node.url ?? ""]
+      .join(" ")
+      .toLowerCase()
+      .includes(normalizedQuery);
+  });
+}
+
+export function getPrivateBookmarkTagOptions(usedTagIds: readonly string[]): PrivateBookmarkTagOption[] {
+  const usedTags = normalizePrivateBookmarkTagTexts(usedTagIds);
+  const usedTagSet = new Set(usedTags);
+  const tagOptions: PrivateBookmarkTagOption[] = [
+    { id: "all", label: "All tags", color: "#f1f0ec", colorClass: "tag-color-all" }
+  ];
+
+  for (const tag of PRIVATE_BOOKMARK_TAGS) {
+    if (usedTagSet.has(tag.id)) {
+      tagOptions.push(tag);
+    }
+  }
+
+  const presetTagIds: Set<string> = new Set(PRIVATE_BOOKMARK_TAGS.map((tag) => tag.id));
+  const customTagOptions = usedTags
+    .filter((tagId) => !presetTagIds.has(tagId))
+    .sort((left, right) => left.localeCompare(right))
+    .map((tagId) => getPrivateBookmarkTagOption(tagId));
+
+  tagOptions.push(...customTagOptions);
+
+  if (usedTagIds.includes("untagged")) {
+    tagOptions.push({ id: "untagged", label: "Untagged", color: "#f1f0ec", colorClass: "tag-color-untagged" });
+  }
+
+  return tagOptions;
+}
 
 function findTreeNodeLocation(
   nodes: PrivateBookmarkViewNode[],
@@ -107,14 +187,35 @@ function isRootFolder(state: PrivateBookmarksViewState, nodeId: string): boolean
   return state.folders.some((folder) => folder.id === nodeId && folder.depth === 0);
 }
 
-function collectFolderDescendantIds(node: PrivateBookmarkViewNode, collected: Set<string> = new Set<string>()): Set<string> {
-  for (const child of node.children) {
-    if (child.type !== "folder") {
+function collectFlatBookmarkNodes(
+  nodes: PrivateBookmarkViewNode[],
+  selectedNodeId: string | null,
+  parentFolder: { id: string; title: string } | null = null,
+  collected: PrivateBookmarkManagerNode[] = []
+): PrivateBookmarkManagerNode[] {
+  for (const node of nodes) {
+    if (node.type === "bookmark") {
+      collected.push({
+        id: node.id,
+        type: node.type,
+        title: node.title,
+        url: node.url,
+        tags: normalizePrivateBookmarkTags(node.tags),
+        depth: 0,
+        isSelected: node.id === selectedNodeId,
+        childCount: 0,
+        parentFolderId: parentFolder?.id ?? null,
+        parentFolderTitle: parentFolder?.title ?? null
+      });
       continue;
     }
 
-    collected.add(child.id);
-    collectFolderDescendantIds(child, collected);
+    collectFlatBookmarkNodes(
+      node.children,
+      selectedNodeId,
+      { id: node.id, title: node.title },
+      collected
+    );
   }
 
   return collected;
@@ -122,16 +223,20 @@ function collectFolderDescendantIds(node: PrivateBookmarkViewNode, collected: Se
 
 function mapNode(
   node: PrivateBookmarkViewNode,
-  selectedNodeId: string | null
+  selectedNodeId: string | null,
+  parentFolder: { id: string; title: string } | null = null
 ): PrivateBookmarkManagerNode {
   return {
     id: node.id,
     type: node.type,
     title: node.title,
     url: node.url,
+    tags: normalizePrivateBookmarkTags(node.tags),
     depth: node.depth,
     isSelected: node.id === selectedNodeId,
-    childCount: node.children.length
+    childCount: node.children.length,
+    parentFolderId: parentFolder?.id ?? null,
+    parentFolderTitle: parentFolder?.title ?? null
   };
 }
 
@@ -150,10 +255,25 @@ export function buildPrivateBookmarkEditDraft(
 ): PrivateBookmarkEditDraft {
   const title = String(formData.get("title") ?? "");
   const url = String(formData.get("url") ?? "");
+  const tags = [
+    ...formData.getAll("tags").map((tag) => {
+      const tagText = String(tag);
+      const tagId = getPrivateBookmarkTagOption(tagText).id;
+
+      return {
+        text: tagText,
+        color: String(formData.get(`tagColor:${tagId}`) ?? "")
+      };
+    }),
+    {
+      text: String(formData.get("customTag") ?? ""),
+      color: String(formData.get("customTagColor") ?? "")
+    }
+  ];
 
   return {
     title,
-    ...(nodeType === "bookmark" ? { url } : {})
+    ...(nodeType === "bookmark" ? { url, tags: normalizePrivateBookmarkTags(tags) } : {})
   };
 }
 
@@ -190,12 +310,17 @@ export function buildPrivateBookmarkManagerViewModel(
       : selectedTreeNodeLocation?.node.type === "folder"
         ? selectedTreeNodeLocation.node.id
         : selectedTreeNodeLocation?.parentFolderId ?? fallbackFolderId;
-  const selectedFolderNode = findTreeNodeLocation(state.tree, resolvedSelectedFolderId)?.node ?? null;
-  const visibleSource = selectedFolderNode?.children ?? state.currentFolder?.children ?? [];
-  const visibleNodeIds = new Set(visibleSource.map((node) => node.id));
-  const resolvedSelectedNodeId = options.selectedNodeId && (selectedTreeNodeLocation || visibleNodeIds.has(options.selectedNodeId))
-    ? options.selectedNodeId
-    : resolvedSelectedFolderId;
+  const visibleNodes = collectFlatBookmarkNodes(
+    state.tree,
+    selectedTreeNodeLocation?.node.type === "bookmark" ? options.selectedNodeId ?? null : null
+  );
+  const usedTagIds = visibleNodes.flatMap((node) => node.tags.map((tag) => tag.text));
+  const hasUntaggedBookmarks = visibleNodes.some((node) => node.tags.length === 0);
+  const visibleNodeIds = new Set(visibleNodes.map((node) => node.id));
+  const resolvedSelectedNodeId =
+    options.selectedNodeId && selectedTreeNodeLocation?.node.type === "bookmark" && visibleNodeIds.has(options.selectedNodeId)
+      ? options.selectedNodeId
+      : null;
   const selectedNode =
     (resolvedSelectedNodeId ? findTreeNodeLocation(state.tree, resolvedSelectedNodeId)?.node ?? null : null);
   const selectedFolder = state.folders.find((folder) => folder.id === resolvedSelectedFolderId) ?? null;
@@ -203,16 +328,6 @@ export function buildPrivateBookmarkManagerViewModel(
   const selectedNodeIsRoot = selectedNode ? isRootFolder(state, selectedNode.id) : false;
   const canMutateNode = !actionsDisabled && Boolean(selectedNode);
   const canMutateRoot = canMutateNode && !selectedNodeIsRoot;
-  const invalidMoveDestinationIds =
-    selectedNode?.type === "folder"
-      ? new Set<string>([selectedNode.id, ...collectFolderDescendantIds(selectedNode)])
-      : new Set<string>();
-  const moveDestinations = state.folders
-    .filter((folder) => !invalidMoveDestinationIds.has(folder.id))
-    .map((folder) => ({
-      ...folder,
-      isSelected: folder.id === resolvedSelectedFolderId
-    }));
 
   return {
     mode: state.mode,
@@ -224,13 +339,12 @@ export function buildPrivateBookmarkManagerViewModel(
       ...folder,
       isSelected: folder.id === resolvedSelectedFolderId
     })),
-    visibleNodes: visibleSource.map((node) => mapNode(node, resolvedSelectedNodeId)),
-    moveDestinations,
+    visibleNodes,
+    tagOptions: getPrivateBookmarkTagOptions([
+      ...usedTagIds,
+      ...(hasUntaggedBookmarks ? ["untagged"] : [])
+    ]),
     actions: {
-      createFolder: {
-        label: "Create folder",
-        disabled: actionsDisabled || !selectedFolder
-      },
       createBookmark: {
         label: "Create bookmark",
         disabled: actionsDisabled || !selectedFolder
@@ -239,13 +353,13 @@ export function buildPrivateBookmarkManagerViewModel(
         label: "Rename",
         disabled: !canMutateNode || selectedNodeIsRoot
       },
-      move: {
-        label: "Move",
-        disabled: !canMutateRoot || moveDestinations.length === 0
-      },
       delete: {
         label: "Delete",
         disabled: !canMutateRoot
+      },
+      dedupe: {
+        label: "Remove duplicates",
+        disabled: actionsDisabled || state.itemCount === 0
       }
     }
   };
@@ -268,6 +382,12 @@ export async function mutatePrivateBookmarks(operation: PrivateBookmarkOperation
     type: "onesync:mutate-private-bookmarks",
     payload: { operation }
   } satisfies RuntimeMessage)) as PrivateBookmarksViewState;
+}
+
+export async function dedupePrivateBookmarksAndSync(): Promise<PrivateBookmarksViewState> {
+  const state = await mutatePrivateBookmarks({ type: "dedupe-bookmarks" });
+  await requestOptionsSync();
+  return state;
 }
 
 export async function saveOptionsConfig(config: SyncConfig): Promise<void> {

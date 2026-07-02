@@ -53,6 +53,10 @@ const sampleBundle: BookmarkBundle = {
       type: "bookmark",
       title: "Example",
       url: "https://example.com/",
+      tags: [
+        { text: "work", color: "#e8f1eb" },
+        { text: "learning queue", color: "#e7eef2" }
+      ],
       addedAt: "2026-06-30T11:59:00.000Z",
       updatedAt: "2026-06-30T11:59:00.000Z"
     }
