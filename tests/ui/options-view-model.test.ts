@@ -254,6 +254,37 @@ describe("options view-model", () => {
     );
   });
 
+  it("keeps the parent folder visible after saving a folder rename when parent context is preserved", () => {
+    const viewModel = buildPrivateBookmarkManagerViewModel(samplePrivateState, {
+      selectedFolderId: "root-toolbar",
+      selectedFolderContextId: "root-toolbar",
+      selectedNodeId: "folder-a"
+    });
+
+    expect(viewModel.selectedFolder).toMatchObject({
+      id: "root-toolbar",
+      title: "Bookmarks Bar"
+    });
+    expect(viewModel.selectedNode).toMatchObject({
+      id: "folder-a",
+      type: "folder",
+      isSelected: true
+    });
+    expect(viewModel.visibleNodes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "folder-a",
+          type: "folder",
+          isSelected: true
+        }),
+        expect.objectContaining({
+          id: "bookmark-1",
+          type: "bookmark"
+        })
+      ])
+    );
+  });
+
   it("uses the selected bookmark parent folder as the action context instead of a stale folder selection", () => {
     const viewModel = buildPrivateBookmarkManagerViewModel(samplePrivateState, {
       selectedFolderId: "root-toolbar",

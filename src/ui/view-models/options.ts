@@ -161,6 +161,7 @@ export function buildPrivateBookmarkManagerViewModel(
   state: PrivateBookmarksViewState,
   options: {
     selectedFolderId?: string;
+    selectedFolderContextId?: string;
     selectedNodeId?: string;
     editingNodeId?: string;
   }
@@ -174,6 +175,9 @@ export function buildPrivateBookmarkManagerViewModel(
   const fallbackFolderId = state.folders.some((folder) => folder.id === options.selectedFolderId)
     ? (options.selectedFolderId ?? state.selectedFolderId)
     : state.selectedFolderId;
+  const selectedFolderContextId = state.folders.some((folder) => folder.id === options.selectedFolderContextId)
+    ? options.selectedFolderContextId ?? null
+    : null;
   const editingFolderContextId =
     editingTreeNodeLocation?.node.type === "folder"
       ? editingTreeNodeLocation.parentFolderId
@@ -181,9 +185,11 @@ export function buildPrivateBookmarkManagerViewModel(
   const resolvedSelectedFolderId =
     editingFolderContextId && options.editingNodeId === options.selectedNodeId
       ? editingFolderContextId
+      : selectedFolderContextId && selectedTreeNodeLocation?.node.type === "folder"
+        ? selectedFolderContextId
       : selectedTreeNodeLocation?.node.type === "folder"
-      ? selectedTreeNodeLocation.node.id
-      : selectedTreeNodeLocation?.parentFolderId ?? fallbackFolderId;
+        ? selectedTreeNodeLocation.node.id
+        : selectedTreeNodeLocation?.parentFolderId ?? fallbackFolderId;
   const selectedFolderNode = findTreeNodeLocation(state.tree, resolvedSelectedFolderId)?.node ?? null;
   const visibleSource = selectedFolderNode?.children ?? state.currentFolder?.children ?? [];
   const visibleNodeIds = new Set(visibleSource.map((node) => node.id));

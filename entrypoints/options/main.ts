@@ -1,4 +1,5 @@
 import { browser } from "wxt/browser";
+import { shouldLoadPrivateBookmarksState, type OptionsWorkspacePage } from "./page-state";
 import { getBookmarkStorageMode } from "../../src/core/browser/bookmarks";
 import type { PrivateBookmarkViewNode } from "../../src/core/private-bookmarks/view-state";
 import type { SyncConfig } from "../../src/core/state/config";
@@ -28,11 +29,11 @@ import {
 
 const root = document.querySelector<HTMLDivElement>("#app");
 const extensionVersion = browser.runtime.getManifest().version;
-type OptionsWorkspacePage = "workspace" | "bookmarks" | "activity";
 let pageMessage: { type: "error" | "info"; text: string } | null = null;
 let refreshHandle: number | null = null;
 let activeWorkspacePage: OptionsWorkspacePage = "workspace";
 let selectedPrivateFolderId: string | null = null;
+let selectedPrivateFolderContextId: string | null = null;
 let selectedPrivateNodeId: string | null = null;
 let privateSearchQuery = "";
 let editingPrivateNodeId: string | null = null;
@@ -372,14 +373,17 @@ async function applyPrivateBookmarkOperation(
     const nextState = await mutatePrivateBookmarks(operation);
 
     if (operation.type === "create-folder" || operation.type === "create-bookmark") {
+      selectedPrivateFolderContextId = null;
       selectedPrivateFolderId = operation.parentId;
     }
 
     if (operation.type === "delete-node" && selectedPrivateNodeId === operation.nodeId) {
+      selectedPrivateFolderContextId = null;
       selectedPrivateNodeId = selectedPrivateFolderId;
     }
 
     if (operation.type === "move-node" && selectedPrivateNodeId === operation.nodeId) {
+      selectedPrivateFolderContextId = null;
       selectedPrivateFolderId = operation.destinationFolderId;
     }
 
@@ -414,12 +418,17 @@ async function renderOptionsPage(
     return;
   }
 
-  const [optionsViewModel, privateBookmarksState] = await Promise.all([
-    loadOptionsViewModel(),
+  const shouldLoadPrivateState = shouldLoadPrivateBookmarksState(
+    activeWorkspacePage,
     privateBookmarksStateOverride
-      ? Promise.resolve(privateBookmarksStateOverride)
-      : loadPrivateBookmarksViewState()
-  ]);
+  );
+  const optionsViewModelPromise = loadOptionsViewModel();
+  const privateBookmarksState = shouldLoadPrivateState
+    ? privateBookmarksStateOverride
+      ? await Promise.resolve(privateBookmarksStateOverride)
+      : await loadPrivateBookmarksViewState()
+    : null;
+  const optionsViewModel = await optionsViewModelPromise;
   const syncStateLabel = formatSyncStatusLabel(optionsViewModel.syncState);
   const progressLabel = formatSyncProgressLabel(optionsViewModel.syncState);
   const progressPercent = getSyncProgressPercent(optionsViewModel.syncState) ?? 0;
@@ -427,38 +436,15 @@ async function renderOptionsPage(
   const bookmarkStorageMode = getBookmarkStorageMode();
   const bookmarkSourceLabel = getBookmarkSourceLabel(bookmarkStorageMode);
   const syncOverview = getSyncOverview(optionsViewModel.syncState);
-  const privateBookmarkManager = buildPrivateBookmarkManagerViewModel(privateBookmarksState, {
-    selectedFolderId: selectedPrivateFolderId ?? undefined,
-    selectedNodeId: selectedPrivateNodeId ?? undefined,
-    editingNodeId: editingPrivateNodeId ?? undefined
-  });
-
-  selectedPrivateFolderId = privateBookmarkManager.selectedFolder?.id ?? null;
-  selectedPrivateNodeId = privateBookmarkManager.selectedNode?.id ?? selectedPrivateFolderId;
-  const visibleNodeIds = new Set(privateBookmarkManager.visibleNodes.map((node) => node.id));
-
-  if (editingPrivateNodeId && !visibleNodeIds.has(editingPrivateNodeId)) {
-    editingPrivateNodeId = null;
-  }
-
-  const filteredVisibleNodes = filterPrivateVisibleNodes(privateBookmarkManager.visibleNodes, privateSearchQuery);
-  const contentHeading = "Current folder";
-  const activeFolderLabel = privateBookmarkManager.selectedFolder?.title ?? "Library";
-  const searchMatchLabel = privateSearchQuery.trim()
-    ? `${filteredVisibleNodes.length} match${filteredVisibleNodes.length === 1 ? "" : "es"}`
-    : `${privateBookmarkManager.visibleNodes.length} items`;
-  const contentDescription = `${activeFolderLabel} • ${searchMatchLabel}`;
-
   const lastSuccessLabel = optionsViewModel.syncState.lastSuccessfulSyncAt
     ? new Date(optionsViewModel.syncState.lastSuccessfulSyncAt).toLocaleString()
     : "Never";
   const scheduleLabel = optionsViewModel.config.scheduledSyncEnabled
     ? `Every ${optionsViewModel.config.intervalMinutes} minute${optionsViewModel.config.intervalMinutes === 1 ? "" : "s"}`
     : "Manual only";
-  const folderCount = privateBookmarkManager.folderEntries.length;
-  const bookmarkModeMeta = privateBookmarkManager.mode === "native"
+  const bookmarkModeMeta = bookmarkStorageMode === "native"
     ? "Native carrier"
-    : privateBookmarkManager.mode === "private"
+    : bookmarkStorageMode === "private"
       ? "Private store"
       : "Unavailable";
   const cadenceMeta = optionsViewModel.config.scheduledSyncEnabled ? "Automatic" : "Manual";
@@ -571,89 +557,123 @@ async function renderOptionsPage(
       </section>
     </section>
   `;
-  const bookmarkPageContent = `
-    <section class="content-section bookmark-section" id="private-bookmark-manager">
-      <div class="section-header">
-        <div class="section-intro">
-          <h2>Bookmark manager</h2>
-          <p class="section-copy">${escapeHtml(privateBookmarkManager.modeHint)}</p>
-        </div>
-        <div class="section-summary">
-          <span>${escapeHtml(String(privateBookmarkManager.itemCount))} items</span>
-          <strong>${escapeHtml(activeFolderLabel)}</strong>
-          <p>${escapeHtml(bookmarkModeMeta)}</p>
-        </div>
-      </div>
+  let privateBookmarkManager: ReturnType<typeof buildPrivateBookmarkManagerViewModel> | null = null;
+  let bookmarkPageContent = "";
 
-      <div class="bookmark-workspace">
-        <aside class="bookmark-pane bookmark-directory-pane">
-          <div class="bookmark-pane-header bookmark-pane-header-rail">
-            <div>
-              <h3>Directory</h3>
-              <p class="bookmark-pane-copy">${folderCount} folders indexed</p>
-            </div>
-          </div>
-          <div class="bookmark-pane-body bookmark-pane-body-rail">
-            ${renderPrivateFolderList(privateBookmarkManager.folderEntries)}
-          </div>
-        </aside>
+  if (privateBookmarksState) {
+    privateBookmarkManager = buildPrivateBookmarkManagerViewModel(privateBookmarksState, {
+      selectedFolderId: selectedPrivateFolderId ?? undefined,
+      selectedFolderContextId: selectedPrivateFolderContextId ?? undefined,
+      selectedNodeId: selectedPrivateNodeId ?? undefined,
+      editingNodeId: editingPrivateNodeId ?? undefined
+    });
 
-        <section class="bookmark-pane bookmark-content-pane">
-          <div class="bookmark-pane-toolbar bookmark-pane-toolbar-main">
-            <div class="bookmark-pane-header bookmark-pane-header-main">
+    selectedPrivateFolderId = privateBookmarkManager.selectedFolder?.id ?? null;
+    selectedPrivateNodeId = privateBookmarkManager.selectedNode?.id ?? selectedPrivateFolderId;
+    const visibleNodeIds = new Set(privateBookmarkManager.visibleNodes.map((node) => node.id));
+
+    if (editingPrivateNodeId && !visibleNodeIds.has(editingPrivateNodeId)) {
+      editingPrivateNodeId = null;
+    }
+
+    const filteredVisibleNodes = filterPrivateVisibleNodes(privateBookmarkManager.visibleNodes, privateSearchQuery);
+    const contentHeading = "Current folder";
+    const activeFolderLabel = privateBookmarkManager.selectedFolder?.title ?? "Library";
+    const searchMatchLabel = privateSearchQuery.trim()
+      ? `${filteredVisibleNodes.length} match${filteredVisibleNodes.length === 1 ? "" : "es"}`
+      : `${privateBookmarkManager.visibleNodes.length} items`;
+    const contentDescription = `${activeFolderLabel} • ${searchMatchLabel}`;
+    const folderCount = privateBookmarkManager.folderEntries.length;
+    const privateBookmarkModeMeta = privateBookmarkManager.mode === "native"
+      ? "Native carrier"
+      : privateBookmarkManager.mode === "private"
+        ? "Private store"
+        : "Unavailable";
+
+    bookmarkPageContent = `
+      <section class="content-section bookmark-section" id="private-bookmark-manager">
+        <div class="section-header">
+          <div class="section-intro">
+            <h2>Bookmark manager</h2>
+            <p class="section-copy">${escapeHtml(privateBookmarkManager.modeHint)}</p>
+          </div>
+          <div class="section-summary">
+            <span>${escapeHtml(String(privateBookmarkManager.itemCount))} items</span>
+            <strong>${escapeHtml(activeFolderLabel)}</strong>
+            <p>${escapeHtml(privateBookmarkModeMeta)}</p>
+          </div>
+        </div>
+
+        <div class="bookmark-workspace">
+          <aside class="bookmark-pane bookmark-directory-pane">
+            <div class="bookmark-pane-header bookmark-pane-header-rail">
               <div>
-                <h3>${escapeHtml(contentHeading)}</h3>
-                <p class="bookmark-pane-copy">${escapeHtml(contentDescription)}</p>
+                <h3>Directory</h3>
+                <p class="bookmark-pane-copy">${folderCount} folders indexed</p>
               </div>
-              <label class="bookmark-search-field">
-                <span>Search</span>
-                <input
-                  id="private-search"
-                  type="search"
-                  value="${escapeHtml(privateSearchQuery)}"
-                  placeholder="Search title or URL"
-                />
-              </label>
             </div>
-            <div class="bookmark-toolbar-row">
-              <div class="bookmark-toolbar-actions">
-                <button type="button" class="secondary-button compact-button" data-private-action="create-folder" ${privateBookmarkManager.actions.createFolder.disabled ? "disabled" : ""}>
-                  ${escapeHtml(privateBookmarkManager.actions.createFolder.label)}
-                </button>
-                <button type="button" class="secondary-button compact-button" data-private-action="create-bookmark" ${privateBookmarkManager.actions.createBookmark.disabled ? "disabled" : ""}>
-                  ${escapeHtml(privateBookmarkManager.actions.createBookmark.label)}
-                </button>
-                <label class="field-group field-group-inline bookmark-move-field">
-                  <span>Move selection</span>
-                  <select id="private-move-destination" ${privateBookmarkManager.actions.move.disabled ? "disabled" : ""}>
-                    ${privateBookmarkManager.moveDestinations
-                      .map(
-                        (folder) => `
-                          <option value="${escapeHtml(folder.id)}" ${folder.isSelected ? "selected" : ""}>
-                            ${"&nbsp;&nbsp;".repeat(folder.depth)}${escapeHtml(folder.title)}
-                          </option>
-                        `
-                      )
-                      .join("")}
-                  </select>
+            <div class="bookmark-pane-body bookmark-pane-body-rail">
+              ${renderPrivateFolderList(privateBookmarkManager.folderEntries)}
+            </div>
+          </aside>
+
+          <section class="bookmark-pane bookmark-content-pane">
+            <div class="bookmark-pane-toolbar bookmark-pane-toolbar-main">
+              <div class="bookmark-pane-header bookmark-pane-header-main">
+                <div>
+                  <h3>${escapeHtml(contentHeading)}</h3>
+                  <p class="bookmark-pane-copy">${escapeHtml(contentDescription)}</p>
+                </div>
+                <label class="bookmark-search-field">
+                  <span>Search</span>
+                  <input
+                    id="private-search"
+                    type="search"
+                    value="${escapeHtml(privateSearchQuery)}"
+                    placeholder="Search title or URL"
+                  />
                 </label>
-                <button type="button" class="secondary-button compact-button" data-private-action="move" ${privateBookmarkManager.actions.move.disabled ? "disabled" : ""}>
-                  ${escapeHtml(privateBookmarkManager.actions.move.label)}
-                </button>
+              </div>
+              <div class="bookmark-toolbar-row">
+                <div class="bookmark-toolbar-actions">
+                  <button type="button" class="secondary-button compact-button" data-private-action="create-folder" ${privateBookmarkManager.actions.createFolder.disabled ? "disabled" : ""}>
+                    ${escapeHtml(privateBookmarkManager.actions.createFolder.label)}
+                  </button>
+                  <button type="button" class="secondary-button compact-button" data-private-action="create-bookmark" ${privateBookmarkManager.actions.createBookmark.disabled ? "disabled" : ""}>
+                    ${escapeHtml(privateBookmarkManager.actions.createBookmark.label)}
+                  </button>
+                  <label class="field-group field-group-inline bookmark-move-field">
+                    <span>Move selection</span>
+                    <select id="private-move-destination" ${privateBookmarkManager.actions.move.disabled ? "disabled" : ""}>
+                      ${privateBookmarkManager.moveDestinations
+                        .map(
+                          (folder) => `
+                            <option value="${escapeHtml(folder.id)}" ${folder.isSelected ? "selected" : ""}>
+                              ${"&nbsp;&nbsp;".repeat(folder.depth)}${escapeHtml(folder.title)}
+                            </option>
+                          `
+                        )
+                        .join("")}
+                    </select>
+                  </label>
+                  <button type="button" class="secondary-button compact-button" data-private-action="move" ${privateBookmarkManager.actions.move.disabled ? "disabled" : ""}>
+                    ${escapeHtml(privateBookmarkManager.actions.move.label)}
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
-          <div class="bookmark-pane-body bookmark-pane-body-main">
-            ${renderPrivateVisibleNodes(
-              filteredVisibleNodes,
-              editingPrivateNodeId,
-              privateSearchQuery
-            )}
-          </div>
-        </section>
-      </div>
-    </section>
-  `;
+            <div class="bookmark-pane-body bookmark-pane-body-main">
+              ${renderPrivateVisibleNodes(
+                filteredVisibleNodes,
+                editingPrivateNodeId,
+                privateSearchQuery
+              )}
+            </div>
+          </section>
+        </div>
+      </section>
+    `;
+  }
   const activityPageContent = `
     <section class="content-section activity-section" id="activity-log">
       <div class="section-intro">
@@ -732,7 +752,9 @@ async function renderOptionsPage(
     }
 
     refreshHandle = window.setTimeout(() => {
-      rememberActivePrivateEditDraft(privateBookmarksState);
+      if (privateBookmarksState) {
+        rememberActivePrivateEditDraft(privateBookmarksState);
+      }
       void renderOptionsPage();
     }, 700);
   } else if (refreshHandle !== null) {
@@ -767,7 +789,7 @@ async function renderOptionsPage(
     }
 
     activeWorkspacePage = requestedPage;
-    await renderOptionsPage(privateBookmarksState);
+    await renderOptionsPage();
   });
 
   if (options?.focusSearch && privateSearchInput) {
@@ -869,135 +891,34 @@ async function renderOptionsPage(
     }
   });
 
-  privateSearchInput?.addEventListener("input", async () => {
-    privateSearchQuery = privateSearchInput.value;
-    await renderOptionsPage(privateBookmarksState, {
-      focusSearch: true,
-      searchSelectionStart: privateSearchInput.selectionStart,
-      searchSelectionEnd: privateSearchInput.selectionEnd
+  if (privateBookmarksState && privateBookmarkManager) {
+    privateSearchInput?.addEventListener("input", async () => {
+      privateSearchQuery = privateSearchInput.value;
+      await renderOptionsPage(privateBookmarksState, {
+        focusSearch: true,
+        searchSelectionStart: privateSearchInput.selectionStart,
+        searchSelectionEnd: privateSearchInput.selectionEnd
+      });
     });
-  });
 
-  privateManagerRoot?.addEventListener("submit", async (event) => {
-    const form = event.target instanceof HTMLFormElement
-      ? event.target.closest<HTMLFormElement>("[data-private-edit-form-id]")
-      : null;
+    privateManagerRoot?.addEventListener("submit", async (event) => {
+      const form = event.target instanceof HTMLFormElement
+        ? event.target.closest<HTMLFormElement>("[data-private-edit-form-id]")
+        : null;
 
-    if (!form) {
-      return;
-    }
-
-    event.preventDefault();
-
-    const editingNodeId = form.dataset.privateEditFormId;
-
-    if (!editingNodeId) {
-      return;
-    }
-
-    const node = findPrivateNodeById(privateBookmarksState.tree, editingNodeId);
-
-    if (!node) {
-      pageMessage = { type: "error", text: "Bookmark item could not be found." };
-      await renderOptionsPage(privateBookmarksState);
-      return;
-    }
-
-    const formData = new FormData(form);
-    const title = String(formData.get("title") ?? "").trim();
-    const draftUrl = String(formData.get("url") ?? "");
-
-    privateEditDrafts.set(editingNodeId, buildPrivateBookmarkEditDraft(node.type, formData));
-
-    if (!title) {
-      pageMessage = { type: "error", text: "Title is required." };
-      await renderOptionsPage(privateBookmarksState);
-      return;
-    }
-
-    if (node.type === "bookmark") {
-      const validatedUrl = validatePrivateBookmarkUrl(draftUrl);
-
-      if (!validatedUrl.ok) {
-        pageMessage = { type: "error", text: validatedUrl.message };
-        await renderOptionsPage(privateBookmarksState);
+      if (!form) {
         return;
       }
 
-      await applyPrivateBookmarkOperation(
-        {
-          type: "update-bookmark",
-          nodeId: node.id,
-          title,
-          url: validatedUrl.value
-        },
-        "Bookmark updated."
-      );
-      return;
-    }
+      event.preventDefault();
 
-    await applyPrivateBookmarkOperation(
-      {
-        type: "rename-node",
-        nodeId: node.id,
-        title
-      },
-      "Folder updated."
-    );
-  });
+      const editingNodeId = form.dataset.privateEditFormId;
 
-  privateManagerRoot?.addEventListener("click", async (event) => {
-    const target = event.target instanceof HTMLElement
-      ? event.target.closest<HTMLElement>("[data-private-folder-id], [data-private-node-id], [data-private-action], [data-private-edit-node-id], [data-private-cancel-edit], [data-private-delete-node-id]")
-      : null;
-
-    if (!target) {
-      return;
-    }
-
-    const folderId = target.dataset.privateFolderId;
-
-    if (folderId) {
-      selectedPrivateFolderId = folderId;
-      selectedPrivateNodeId = folderId;
-      await renderOptionsPage(privateBookmarksState);
-      return;
-    }
-
-    const nodeId = target.dataset.privateNodeId;
-
-    if (nodeId) {
-      const node = findPrivateNodeById(privateBookmarksState.tree, nodeId);
-      selectedPrivateNodeId = nodeId;
-      if (node?.type === "folder") {
-        selectedPrivateFolderId = nodeId;
+      if (!editingNodeId) {
+        return;
       }
-      await renderOptionsPage(privateBookmarksState);
-      return;
-    }
 
-    const editNodeId = target.dataset.privateEditNodeId;
-
-    if (editNodeId) {
-      selectedPrivateNodeId = editNodeId;
-      editingPrivateNodeId = editNodeId;
-      await renderOptionsPage(privateBookmarksState);
-      return;
-    }
-
-    if (target.dataset.privateCancelEdit) {
-      if (editingPrivateNodeId) {
-        privateEditDrafts.delete(editingPrivateNodeId);
-      }
-      editingPrivateNodeId = null;
-      await renderOptionsPage(privateBookmarksState);
-      return;
-    }
-
-    const deleteNodeId = target.dataset.privateDeleteNodeId;
-
-    if (deleteNodeId) {
-      const node = findPrivateNodeById(privateBookmarksState.tree, deleteNodeId);
+      const node = findPrivateNodeById(privateBookmarksState.tree, editingNodeId);
 
       if (!node) {
         pageMessage = { type: "error", text: "Bookmark item could not be found." };
@@ -1005,100 +926,208 @@ async function renderOptionsPage(
         return;
       }
 
-      const confirmed = window.confirm(`Delete "${node.title}"?`);
+      const formData = new FormData(form);
+      const title = String(formData.get("title") ?? "").trim();
+      const draftUrl = String(formData.get("url") ?? "");
 
-      if (!confirmed) {
+      privateEditDrafts.set(editingNodeId, buildPrivateBookmarkEditDraft(node.type, formData));
+
+      if (!title) {
+        pageMessage = { type: "error", text: "Title is required." };
+        await renderOptionsPage(privateBookmarksState);
         return;
       }
 
-      await applyPrivateBookmarkOperation(
-        {
-          type: "delete-node",
-          nodeId: deleteNodeId
-        },
-        node.type === "folder" ? "Folder deleted." : "Bookmark deleted."
-      );
-      return;
-    }
-
-    const action = target.dataset.privateAction;
-    const selectedNode = privateBookmarkManager.selectedNode;
-    const selectedFolder = privateBookmarkManager.selectedFolder;
-
-    switch (action) {
-      case "create-folder": {
-        if (!selectedFolder) {
-          return;
-        }
-
-        const title = window.prompt("Folder name", "");
-
-        if (!title || !title.trim()) {
-          return;
-        }
-
-        await applyPrivateBookmarkOperation(
-          {
-            type: "create-folder",
-            parentId: selectedFolder.id,
-            title: title.trim()
-          },
-          "Folder created."
-        );
-        return;
-      }
-      case "create-bookmark": {
-        if (!selectedFolder) {
-          return;
-        }
-
-        const title = window.prompt("Bookmark name", "");
-
-        if (!title || !title.trim()) {
-          return;
-        }
-
-        const url = window.prompt("Bookmark URL", "https://");
-
-        if (!url || !url.trim()) {
-          return;
-        }
-
-        const validatedUrl = validatePrivateBookmarkUrl(url);
+      if (node.type === "bookmark") {
+        const validatedUrl = validatePrivateBookmarkUrl(draftUrl);
 
         if (!validatedUrl.ok) {
-          window.alert(validatedUrl.message);
+          pageMessage = { type: "error", text: validatedUrl.message };
+          await renderOptionsPage(privateBookmarksState);
           return;
         }
 
         await applyPrivateBookmarkOperation(
           {
-            type: "create-bookmark",
-            parentId: selectedFolder.id,
-            title: title.trim(),
+            type: "update-bookmark",
+            nodeId: node.id,
+            title,
             url: validatedUrl.value
           },
-          "Bookmark created."
+          "Bookmark updated."
         );
         return;
       }
-      case "move": {
-        if (!selectedNode || !privateMoveDestination?.value) {
+
+      selectedPrivateFolderContextId = selectedPrivateFolderId;
+      await applyPrivateBookmarkOperation(
+        {
+          type: "rename-node",
+          nodeId: node.id,
+          title
+        },
+        "Folder updated."
+      );
+    });
+
+    privateManagerRoot?.addEventListener("click", async (event) => {
+      const target = event.target instanceof HTMLElement
+        ? event.target.closest<HTMLElement>("[data-private-folder-id], [data-private-node-id], [data-private-action], [data-private-edit-node-id], [data-private-cancel-edit], [data-private-delete-node-id]")
+        : null;
+
+      if (!target) {
+        return;
+      }
+
+      const folderId = target.dataset.privateFolderId;
+
+      if (folderId) {
+        selectedPrivateFolderContextId = null;
+        selectedPrivateFolderId = folderId;
+        selectedPrivateNodeId = folderId;
+        await renderOptionsPage(privateBookmarksState);
+        return;
+      }
+
+      const nodeId = target.dataset.privateNodeId;
+
+      if (nodeId) {
+        const node = findPrivateNodeById(privateBookmarksState.tree, nodeId);
+        selectedPrivateFolderContextId = null;
+        selectedPrivateNodeId = nodeId;
+        if (node?.type === "folder") {
+          selectedPrivateFolderId = nodeId;
+        }
+        await renderOptionsPage(privateBookmarksState);
+        return;
+      }
+
+      const editNodeId = target.dataset.privateEditNodeId;
+
+      if (editNodeId) {
+        selectedPrivateFolderContextId = null;
+        selectedPrivateNodeId = editNodeId;
+        editingPrivateNodeId = editNodeId;
+        await renderOptionsPage(privateBookmarksState);
+        return;
+      }
+
+      if (target.dataset.privateCancelEdit) {
+        if (editingPrivateNodeId) {
+          privateEditDrafts.delete(editingPrivateNodeId);
+        }
+        selectedPrivateFolderContextId = null;
+        editingPrivateNodeId = null;
+        await renderOptionsPage(privateBookmarksState);
+        return;
+      }
+
+      const deleteNodeId = target.dataset.privateDeleteNodeId;
+
+      if (deleteNodeId) {
+        const node = findPrivateNodeById(privateBookmarksState.tree, deleteNodeId);
+
+        if (!node) {
+          pageMessage = { type: "error", text: "Bookmark item could not be found." };
+          await renderOptionsPage(privateBookmarksState);
+          return;
+        }
+
+        const confirmed = window.confirm(`Delete "${node.title}"?`);
+
+        if (!confirmed) {
           return;
         }
 
         await applyPrivateBookmarkOperation(
           {
-            type: "move-node",
-            nodeId: selectedNode.id,
-            destinationFolderId: privateMoveDestination.value
+            type: "delete-node",
+            nodeId: deleteNodeId
           },
-          "Bookmark moved."
+          node.type === "folder" ? "Folder deleted." : "Bookmark deleted."
         );
         return;
       }
-    }
-  });
+
+      const action = target.dataset.privateAction;
+      const selectedNode = privateBookmarkManager.selectedNode;
+      const selectedFolder = privateBookmarkManager.selectedFolder;
+
+      switch (action) {
+        case "create-folder": {
+          if (!selectedFolder) {
+            return;
+          }
+
+          const title = window.prompt("Folder name", "");
+
+          if (!title || !title.trim()) {
+            return;
+          }
+
+          await applyPrivateBookmarkOperation(
+            {
+              type: "create-folder",
+              parentId: selectedFolder.id,
+              title: title.trim()
+            },
+            "Folder created."
+          );
+          return;
+        }
+        case "create-bookmark": {
+          if (!selectedFolder) {
+            return;
+          }
+
+          const title = window.prompt("Bookmark name", "");
+
+          if (!title || !title.trim()) {
+            return;
+          }
+
+          const url = window.prompt("Bookmark URL", "https://");
+
+          if (!url || !url.trim()) {
+            return;
+          }
+
+          const validatedUrl = validatePrivateBookmarkUrl(url);
+
+          if (!validatedUrl.ok) {
+            window.alert(validatedUrl.message);
+            return;
+          }
+
+          await applyPrivateBookmarkOperation(
+            {
+              type: "create-bookmark",
+              parentId: selectedFolder.id,
+              title: title.trim(),
+              url: validatedUrl.value
+            },
+            "Bookmark created."
+          );
+          return;
+        }
+        case "move": {
+          if (!selectedNode || !privateMoveDestination?.value) {
+            return;
+          }
+
+          await applyPrivateBookmarkOperation(
+            {
+              type: "move-node",
+              nodeId: selectedNode.id,
+              destinationFolderId: privateMoveDestination.value
+            },
+            "Bookmark moved."
+          );
+          return;
+        }
+      }
+    });
+  }
 }
 
 void renderOptionsPage();
