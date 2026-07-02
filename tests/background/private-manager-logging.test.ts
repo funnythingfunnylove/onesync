@@ -15,6 +15,8 @@ const {
   encodeBundleMock,
   decodeBundleMock,
   applyBundleToBookmarksMock,
+  applySharedBundleLocallyMock,
+  getBookmarkStorageModeMock,
   setRecoverySnapshotMock
 } = vi.hoisted(() => ({
   getConfigMock: vi.fn(),
@@ -27,6 +29,8 @@ const {
   encodeBundleMock: vi.fn(),
   decodeBundleMock: vi.fn(),
   applyBundleToBookmarksMock: vi.fn(),
+  applySharedBundleLocallyMock: vi.fn(),
+  getBookmarkStorageModeMock: vi.fn(() => "private"),
   setRecoverySnapshotMock: vi.fn()
 }));
 
@@ -45,7 +49,8 @@ vi.mock("wxt/browser", () => ({
 
 vi.mock("../../src/core/browser/bookmarks", () => ({
   applyBundleToBookmarks: applyBundleToBookmarksMock,
-  getBookmarkStorageMode: vi.fn(() => "private"),
+  applySharedBundleLocally: applySharedBundleLocallyMock,
+  getBookmarkStorageMode: getBookmarkStorageModeMock,
   loadSharedBookmarkBundle: loadSharedBookmarkBundleMock
 }));
 
@@ -208,6 +213,7 @@ beforeEach(() => {
   loadSharedBookmarkBundleMock.mockResolvedValue(currentBundle);
   encodeBundleMock.mockResolvedValue({ kind: "onesync.bundle", payload: "encoded" });
   decodeBundleMock.mockResolvedValue(currentBundle);
+  getBookmarkStorageModeMock.mockReturnValue("private");
   buildPrivateBookmarksViewStateMock.mockReturnValue({
     mode: "private",
     selectedFolderId: "root-toolbar",
@@ -331,6 +337,29 @@ describe("background private bookmark activity logging", () => {
 
     expect(loadSharedBookmarkBundleMock).toHaveBeenCalledWith(sampleConfig);
     expect(setRecoverySnapshotMock).toHaveBeenCalledWith(currentBundle);
-    expect(applyBundleToBookmarksMock).toHaveBeenCalledWith(currentBundle);
+    expect(applySharedBundleLocallyMock).toHaveBeenCalledWith(currentBundle, "private");
+  });
+
+  it("surfaces shared-bundle apply failures during import with the active carrier mode", async () => {
+    vi.stubGlobal("defineBackground", (factory: () => unknown) => factory);
+    const applyFailure = new Error(
+      "Shared data saved, browser bookmarks not updated: Failed to apply bookmark bundle locally: Native bookmarks write blocked"
+    );
+    getBookmarkStorageModeMock.mockReturnValue("native");
+    applySharedBundleLocallyMock.mockRejectedValueOnce(applyFailure);
+    const { handleRuntimeMessage } = await import("../../entrypoints/background");
+
+    await expect(
+      handleRuntimeMessage({
+        type: "onesync:import-bundle",
+        payload: {
+          encodedBundleJson: JSON.stringify({ kind: "onesync.bundle", payload: "encoded" })
+        }
+      } satisfies RuntimeMessage)
+    ).rejects.toThrow(applyFailure.message);
+
+    expect(loadSharedBookmarkBundleMock).toHaveBeenCalledWith(sampleConfig);
+    expect(setRecoverySnapshotMock).toHaveBeenCalledWith(currentBundle);
+    expect(applySharedBundleLocallyMock).toHaveBeenCalledWith(currentBundle, "native");
   });
 });

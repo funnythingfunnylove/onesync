@@ -1,6 +1,7 @@
 import { browser } from "wxt/browser";
 import type { BookmarkBundle, BookmarkNode } from "../format/schema";
 import { normalizeBundle } from "../format/schema";
+import { validatePrivateBookmarkUrl } from "../private-bookmarks/validation";
 import type { SyncConfig } from "../state/config";
 import { clearStoredBundle, loadStoredBundle, saveStoredBundle } from "./bundle-storage";
 
@@ -138,6 +139,20 @@ function countBundleDescendants(bundle: BookmarkBundle, nodeIds: string[]): numb
   }
 
   return total;
+}
+
+function assertBundleBookmarkUrlsAreSupported(bundle: BookmarkBundle): void {
+  for (const node of Object.values(bundle.nodes)) {
+    if (node.type !== "bookmark") {
+      continue;
+    }
+
+    const validatedUrl = validatePrivateBookmarkUrl(node.url);
+
+    if (!validatedUrl.ok) {
+      throw new Error(`${validatedUrl.message} (bookmark "${node.title}" / ${node.id})`);
+    }
+  }
 }
 
 async function emitProgress(tracker: ProgressTracker | null): Promise<void> {
@@ -623,6 +638,8 @@ export async function applyBundleToBookmarks(
   bundle: BookmarkBundle,
   options: BookmarkOperationOptions = {}
 ): Promise<void> {
+  assertBundleBookmarkUrlsAreSupported(bundle);
+
   try {
     if (!hasBookmarksApi()) {
       const normalizedBundle = await savePrivateBookmarkBundle(bundle);
@@ -703,19 +720,25 @@ export async function applyBundleToBookmarks(
   }
 }
 
-export async function applySharedBundleLocally(bundle: BookmarkBundle, mode: BookmarkStorageMode): Promise<void> {
+export async function applySharedBundleLocally(
+  bundle: BookmarkBundle,
+  mode: BookmarkStorageMode,
+  options: BookmarkOperationOptions = {}
+): Promise<void> {
   if (mode === "unavailable") {
     throw new Error(BOOKMARKS_API_UNAVAILABLE_MESSAGE);
   }
 
+  assertBundleBookmarkUrlsAreSupported(bundle);
+
   if (mode === "private") {
-    await applyBundleToBookmarks(bundle);
+    await applyBundleToBookmarks(bundle, options);
     await clearSavedSharedBundleFallback();
     return;
   }
 
   try {
-    await applyBundleToBookmarks(bundle);
+    await applyBundleToBookmarks(bundle, options);
     await clearSavedSharedBundleFallback();
   } catch (error) {
     await saveNativeFallbackBundle(bundle);

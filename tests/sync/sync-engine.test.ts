@@ -124,6 +124,8 @@ const {
   setBaseSnapshot,
   setRecoverySnapshot,
   applyBundleToBookmarks,
+  applySharedBundleLocally,
+  getBookmarkStorageMode,
   setSyncState,
   appendActivityLog,
   encodeBundle,
@@ -136,6 +138,8 @@ const {
   setBaseSnapshot: vi.fn(),
   setRecoverySnapshot: vi.fn(),
   applyBundleToBookmarks: vi.fn(),
+  applySharedBundleLocally: vi.fn(),
+  getBookmarkStorageMode: vi.fn(() => "native"),
   setSyncState: vi.fn(),
   appendActivityLog: vi.fn(),
   encodeBundle: vi.fn(),
@@ -146,6 +150,8 @@ const {
 
 vi.mock("../../src/core/browser/bookmarks", () => ({
   applyBundleToBookmarks,
+  applySharedBundleLocally,
+  getBookmarkStorageMode,
   loadSharedBookmarkBundle
 }));
 
@@ -206,6 +212,7 @@ beforeEach(() => {
   decodeBundle.mockResolvedValue(localBundle);
   loadSharedBookmarkBundle.mockResolvedValue(localBundle);
   getBaseSnapshot.mockResolvedValue(null);
+  getBookmarkStorageMode.mockReturnValue("native");
   fetchLatestBundle.mockResolvedValue({ bundleEtag: null, metadataEtag: null, bundle: null });
 });
 
@@ -554,7 +561,8 @@ describe("syncOnce", () => {
     });
 
     expect(result.status).toBe("merged");
-    expect(applyBundleToBookmarks).toHaveBeenCalledTimes(1);
+    expect(applySharedBundleLocally).toHaveBeenCalledTimes(1);
+    expect(applySharedBundleLocally).toHaveBeenCalledWith(expect.any(Object), "native", expect.any(Object));
     expect(setBaseSnapshot).toHaveBeenCalledTimes(1);
     expect(putLatestBundle).toHaveBeenCalledTimes(1);
     expect(putLatestBundle).toHaveBeenCalledWith(
@@ -606,7 +614,7 @@ describe("syncOnce", () => {
       bundle: encodedBundle
     });
     decodeBundle.mockResolvedValueOnce(remoteBundle);
-    applyBundleToBookmarks.mockImplementationOnce(async (_bundle, options) => {
+    applySharedBundleLocally.mockImplementationOnce(async (_bundle, _mode, options) => {
       await options?.onProgress?.({
         processed: 1,
         total: 1
@@ -626,7 +634,7 @@ describe("syncOnce", () => {
 
     expect(result.status).toBe("downloaded");
     expect(result.revision).toBe(remoteBundle.revision);
-    expect(applyBundleToBookmarks).toHaveBeenCalledWith(remoteBundle, expect.any(Object));
+    expect(applySharedBundleLocally).toHaveBeenCalledWith(remoteBundle, "native", expect.any(Object));
     expect(setBaseSnapshot).toHaveBeenCalledWith(remoteBundle);
     expect(putLatestBundle).not.toHaveBeenCalled();
     expect(setSyncState).toHaveBeenCalledWith(
@@ -663,7 +671,7 @@ describe("syncOnce", () => {
       bundle: encodedBundle
     });
     decodeBundle.mockResolvedValueOnce(remoteBundle);
-    applyBundleToBookmarks.mockImplementationOnce(async (_bundle, options) => {
+    applySharedBundleLocally.mockImplementationOnce(async (_bundle, _mode, options) => {
       await options?.onProgress?.({
         processed: 1,
         total: 1
@@ -682,9 +690,65 @@ describe("syncOnce", () => {
     });
 
     expect(result.status).toBe("downloaded");
-    expect(applyBundleToBookmarks).toHaveBeenCalledWith(remoteBundle, expect.any(Object));
+    expect(applySharedBundleLocally).toHaveBeenCalledWith(remoteBundle, "native", expect.any(Object));
     expect(setBaseSnapshot).toHaveBeenCalledWith(remoteBundle);
     expect(putLatestBundle).not.toHaveBeenCalled();
+  });
+
+  it("surfaces shared-bundle apply failures during remote downloads", async () => {
+    const baseBundle = structuredClone(localBundle);
+    const remoteBundle = {
+      ...structuredClone(localBundle),
+      revision: "2026-06-30T12:02:00.000Z#device-2#1",
+      deviceId: "device-2",
+      nodes: {
+        ...localBundle.nodes,
+        "bookmark-1": {
+          ...localBundle.nodes["bookmark-1"],
+          title: "Remote Only Title",
+          updatedAt: "2026-06-30T12:02:00.000Z"
+        }
+      }
+    } satisfies BookmarkBundle;
+    const applyFailure = new Error(
+      "Shared data saved, browser bookmarks not updated: Failed to apply bookmark bundle locally: Native bookmarks write blocked"
+    );
+
+    getBaseSnapshot.mockResolvedValue(baseBundle);
+    fetchLatestBundle.mockResolvedValue({
+      bundleEtag: "\"bundle-etag-2\"",
+      metadataEtag: "\"meta-etag-2\"",
+      bundle: encodedBundle
+    });
+    decodeBundle.mockResolvedValueOnce(remoteBundle);
+    applySharedBundleLocally.mockRejectedValueOnce(applyFailure);
+
+    await expect(
+      syncOnce({
+        deviceId: "device-1",
+        webdavUrl: "https://dav.example.com",
+        username: "alice",
+        password: "secret",
+        basePath: "/onesync",
+        intervalMinutes: 15,
+        scheduledSyncEnabled: true,
+        allowInsecureHttp: false
+      })
+    ).rejects.toThrow(applyFailure.message);
+
+    expect(applySharedBundleLocally).toHaveBeenCalledWith(remoteBundle, "native", expect.any(Object));
+    expect(setSyncState).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "error",
+        lastError: applyFailure.message
+      })
+    );
+    expect(appendActivityLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        level: "error",
+        message: applyFailure.message
+      })
+    );
   });
 
   it("returns idle and skips writeback when neither side changed from the base snapshot", async () => {
@@ -711,7 +775,7 @@ describe("syncOnce", () => {
 
     expect(result.status).toBe("idle");
     expect(result.revision).toBe(baseBundle.revision);
-    expect(applyBundleToBookmarks).not.toHaveBeenCalled();
+    expect(applySharedBundleLocally).not.toHaveBeenCalled();
     expect(putLatestBundle).not.toHaveBeenCalled();
   });
 });

@@ -811,6 +811,138 @@ describe("bookmark adapter", () => {
     });
   });
 
+  it("rejects invalid shared bookmark URLs before writing native bookmarks or fallback state", async () => {
+    await expect(
+      applySharedBundleLocally(
+        {
+          kind: "onesync.bookmarks",
+          schemaVersion: 1,
+          revision: "2026-07-02T08:00:00.000Z#device-1#import",
+          deviceId: "device-1",
+          generatedAt: "2026-07-02T08:00:00.000Z",
+          roots: {
+            toolbar: "toolbar-root",
+            menu: "menu-root",
+            mobile: "mobile-root",
+            unfiled: "menu-root"
+          },
+          nodes: {
+            "toolbar-root": {
+              id: "toolbar-root",
+              type: "folder",
+              title: "Bookmarks Bar",
+              children: ["bookmark-invalid"],
+              addedAt: "2026-07-02T08:00:00.000Z",
+              updatedAt: "2026-07-02T08:00:00.000Z"
+            },
+            "menu-root": {
+              id: "menu-root",
+              type: "folder",
+              title: "Bookmarks Menu",
+              children: [],
+              addedAt: "2026-07-02T08:00:00.000Z",
+              updatedAt: "2026-07-02T08:00:00.000Z"
+            },
+            "mobile-root": {
+              id: "mobile-root",
+              type: "folder",
+              title: "Mobile Bookmarks",
+              children: [],
+              addedAt: "2026-07-02T08:00:00.000Z",
+              updatedAt: "2026-07-02T08:00:00.000Z"
+            },
+            "bookmark-invalid": {
+              id: "bookmark-invalid",
+              type: "bookmark",
+              title: "Malicious bookmark",
+              url: "javascript:alert(1)",
+              addedAt: "2026-07-02T08:00:00.000Z",
+              updatedAt: "2026-07-02T08:00:00.000Z"
+            }
+          },
+          tombstones: [],
+          meta: {
+            client: "onesync",
+            clientVersion: "0.1.3"
+          }
+        },
+        "native"
+      )
+    ).rejects.toThrow(/bookmark url must start with http:\/\/ or https:\/\//i);
+
+    expect(createMock).not.toHaveBeenCalled();
+    expect(storageSetMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects invalid shared bookmark URLs before saving the private fallback carrier", async () => {
+    (browserMock as { bookmarks?: unknown }).bookmarks = undefined;
+
+    await expect(
+      applyBundleToBookmarks({
+        kind: "onesync.bookmarks",
+        schemaVersion: 1,
+        revision: "2026-07-02T08:30:00.000Z#device-1#import",
+        deviceId: "device-1",
+        generatedAt: "2026-07-02T08:30:00.000Z",
+        roots: {
+          toolbar: "onesync.synthetic.toolbar",
+          menu: "onesync.synthetic.menu",
+          mobile: "onesync.synthetic.mobile",
+          unfiled: "onesync.synthetic.unfiled"
+        },
+        nodes: {
+          "onesync.synthetic.toolbar": {
+            id: "onesync.synthetic.toolbar",
+            type: "folder",
+            title: "Bookmarks Bar",
+            children: ["bookmark-invalid"],
+            addedAt: "2026-07-02T08:30:00.000Z",
+            updatedAt: "2026-07-02T08:30:00.000Z"
+          },
+          "onesync.synthetic.menu": {
+            id: "onesync.synthetic.menu",
+            type: "folder",
+            title: "Bookmarks Menu",
+            children: [],
+            addedAt: "2026-07-02T08:30:00.000Z",
+            updatedAt: "2026-07-02T08:30:00.000Z"
+          },
+          "onesync.synthetic.mobile": {
+            id: "onesync.synthetic.mobile",
+            type: "folder",
+            title: "Mobile Bookmarks",
+            children: [],
+            addedAt: "2026-07-02T08:30:00.000Z",
+            updatedAt: "2026-07-02T08:30:00.000Z"
+          },
+          "onesync.synthetic.unfiled": {
+            id: "onesync.synthetic.unfiled",
+            type: "folder",
+            title: "Unfiled Bookmarks",
+            children: [],
+            addedAt: "2026-07-02T08:30:00.000Z",
+            updatedAt: "2026-07-02T08:30:00.000Z"
+          },
+          "bookmark-invalid": {
+            id: "bookmark-invalid",
+            type: "bookmark",
+            title: "Malformed import",
+            url: "not a url",
+            addedAt: "2026-07-02T08:30:00.000Z",
+            updatedAt: "2026-07-02T08:30:00.000Z"
+          }
+        },
+        tombstones: [],
+        meta: {
+          client: "onesync",
+          clientVersion: "0.1.3"
+        }
+      })
+    ).rejects.toThrow(/bookmark url must be a complete url/i);
+
+    expect(storageSetMock).not.toHaveBeenCalled();
+  });
+
   it("still fails clearly when neither bookmarks nor storage are available", async () => {
     (browserMock as { bookmarks?: unknown }).bookmarks = undefined;
     browserMock.storage = undefined as unknown as typeof browserMock.storage;

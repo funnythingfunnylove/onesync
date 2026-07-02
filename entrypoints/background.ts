@@ -1,5 +1,6 @@
 import { browser } from "wxt/browser";
 import {
+  applySharedBundleLocally,
   applyBundleToBookmarks,
   getBookmarkStorageMode,
   loadSharedBookmarkBundle
@@ -161,7 +162,7 @@ export async function handleRuntimeMessage(message: RuntimeMessage): Promise<unk
       await setRecoverySnapshot(previousBundle);
 
       const decodedBundle = await decodeBundle(JSON.parse(message.payload.encodedBundleJson));
-      await applyBundleToBookmarks(decodedBundle);
+      await applySharedBundleLocally(decodedBundle, getBookmarkStorageMode());
       await setBaseSnapshot(decodedBundle);
       await setSyncState({
         lastSyncAt: new Date().toISOString(),

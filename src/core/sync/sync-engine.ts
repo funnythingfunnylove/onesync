@@ -1,4 +1,8 @@
-import { applyBundleToBookmarks, loadSharedBookmarkBundle } from "../browser/bookmarks";
+import {
+  applySharedBundleLocally,
+  getBookmarkStorageMode,
+  loadSharedBookmarkBundle
+} from "../browser/bookmarks";
 import { getBaseSnapshot, setBaseSnapshot, setRecoverySnapshot } from "../browser/storage";
 import { decodeBundle } from "../format/decode";
 import { encodeBundle } from "../format/encode";
@@ -252,7 +256,7 @@ export async function syncOnce(config: SyncConfig): Promise<{
         message: "Applying remote bookmark bundle locally.",
         createdAt: new Date().toISOString()
       });
-      await applyBundleToBookmarks(remoteBundle, {
+      await applySharedBundleLocally(remoteBundle, getBookmarkStorageMode(), {
         onProgress: async (progress) => {
           await writeProgress({
             phase: "applying-remote",
@@ -298,7 +302,7 @@ export async function syncOnce(config: SyncConfig): Promise<{
       message: "Applying merged bookmark bundle locally.",
       createdAt: new Date().toISOString()
     });
-    await applyBundleToBookmarks(mergedBundle, {
+    await applySharedBundleLocally(mergedBundle, getBookmarkStorageMode(), {
       onProgress: async (progress) => {
         await writeProgress({
           phase: "applying-remote",
