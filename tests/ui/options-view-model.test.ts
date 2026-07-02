@@ -223,6 +223,37 @@ describe("options view-model", () => {
     ]);
   });
 
+  it("keeps the parent folder visible when editing a folder row inline", () => {
+    const viewModel = buildPrivateBookmarkManagerViewModel(samplePrivateState, {
+      selectedFolderId: "root-toolbar",
+      selectedNodeId: "folder-a",
+      editingNodeId: "folder-a"
+    });
+
+    expect(viewModel.selectedFolder).toMatchObject({
+      id: "root-toolbar",
+      title: "Bookmarks Bar"
+    });
+    expect(viewModel.selectedNode).toMatchObject({
+      id: "folder-a",
+      type: "folder",
+      isSelected: true
+    });
+    expect(viewModel.visibleNodes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "folder-a",
+          type: "folder",
+          isSelected: true
+        }),
+        expect.objectContaining({
+          id: "bookmark-1",
+          type: "bookmark"
+        })
+      ])
+    );
+  });
+
   it("uses the selected bookmark parent folder as the action context instead of a stale folder selection", () => {
     const viewModel = buildPrivateBookmarkManagerViewModel(samplePrivateState, {
       selectedFolderId: "root-toolbar",

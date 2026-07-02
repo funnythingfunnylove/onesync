@@ -161,6 +161,59 @@ describe("webdav client", () => {
     );
   });
 
+  it("keeps successful latest-bundle reads when the device metadata listing is denied", async () => {
+    const fetchMock = vi.fn(async (input: URL | RequestInfo, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+
+      if (url.endsWith("latest.meta.json")) {
+        return new Response(JSON.stringify({
+          revision: "2026-07-01T08:00:00.000Z#device-safari#sync",
+          deviceId: "device-safari",
+          updatedAt: "2026-07-01T08:00:00.000Z"
+        }), {
+          status: 200,
+          headers: {
+            ETag: "\"meta-etag\""
+          }
+        });
+      }
+
+      if (url.endsWith("latest.onesync")) {
+        return new Response(JSON.stringify(sampleEncodedBundle), {
+          status: 200,
+          headers: {
+            ETag: "\"bundle-etag\""
+          }
+        });
+      }
+
+      if (url.endsWith("/devices") && init?.method === "PROPFIND") {
+        return new Response("Forbidden", { status: 403 });
+      }
+
+      return new Response("Not Found", { status: 404 });
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = createWebDavClient({
+      deviceId: "device-safari",
+      webdavUrl: "https://dav.example.com",
+      username: "alice",
+      password: "secret",
+      basePath: "/onesync",
+      intervalMinutes: 15,
+      scheduledSyncEnabled: true,
+      allowInsecureHttp: false
+    });
+
+    await expect(client.fetchLatestBundle()).resolves.toEqual({
+      bundleEtag: "\"bundle-etag\"",
+      metadataEtag: "\"meta-etag\"",
+      bundle: sampleEncodedBundle
+    });
+  });
+
   it("rejects insecure HTTP endpoints unless explicitly enabled", () => {
     expect(() =>
       createWebDavClient({

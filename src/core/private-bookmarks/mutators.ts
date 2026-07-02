@@ -1,5 +1,6 @@
 import { normalizeBundle, type BookmarkBundle, type BookmarkNode } from "../format/schema";
 import type { PrivateBookmarkOperation } from "../shared/types";
+import { validatePrivateBookmarkUrl } from "./validation";
 
 type BookmarkTombstone = BookmarkBundle["tombstones"][number];
 
@@ -205,6 +206,12 @@ function createBookmark(
   url: string,
   deviceId: string
 ): BookmarkBundle {
+  const validatedUrl = validatePrivateBookmarkUrl(url);
+
+  if (!validatedUrl.ok) {
+    throw new Error(validatedUrl.message);
+  }
+
   const next = cloneBundle(bundle);
   const parent = getFolderNode(next, parentId, "Parent");
   const generatedAt = new Date().toISOString();
@@ -214,7 +221,7 @@ function createBookmark(
     id: nodeId,
     type: "bookmark",
     title,
-    url,
+    url: validatedUrl.value,
     addedAt: generatedAt,
     updatedAt: generatedAt
   };
@@ -246,6 +253,12 @@ function updateBookmark(
   url: string,
   deviceId: string
 ): BookmarkBundle {
+  const validatedUrl = validatePrivateBookmarkUrl(url);
+
+  if (!validatedUrl.ok) {
+    throw new Error(validatedUrl.message);
+  }
+
   const next = cloneBundle(bundle);
   const generatedAt = new Date().toISOString();
   const node = getNode(next, nodeId);
@@ -257,7 +270,7 @@ function updateBookmark(
   next.nodes[nodeId] = {
     ...node,
     title,
-    url,
+    url: validatedUrl.value,
     updatedAt: generatedAt
   };
 

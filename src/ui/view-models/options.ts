@@ -1,5 +1,9 @@
 import { browser } from "wxt/browser";
 import type { BookmarkStorageMode } from "../../core/browser/bookmarks";
+import {
+  validatePrivateBookmarkUrl,
+  type BookmarkUrlValidationResult
+} from "../../core/private-bookmarks/validation";
 import type { SyncConfig } from "../../core/state/config";
 import { validateSyncConfigForSync } from "../../core/state/config-validation";
 import type { PrivateBookmarkOperation, RuntimeMessage } from "../../core/shared/types";
@@ -7,6 +11,9 @@ import type { ActivityLogEntry } from "../../core/state/activity-log";
 import type { SyncState } from "../../core/state/sync-state";
 import type { PrivateBookmarksViewState, PrivateBookmarkViewNode } from "../../core/private-bookmarks/view-state";
 import { requestSyncTrigger } from "./sync-trigger";
+
+export { validatePrivateBookmarkUrl };
+export type { BookmarkUrlValidationResult };
 
 export type OptionsViewModel = {
   config: SyncConfig;
@@ -63,10 +70,6 @@ type TreeNodeLocation = {
   node: PrivateBookmarkViewNode;
   parentFolderId: string | null;
 };
-
-export type BookmarkUrlValidationResult =
-  | { ok: true; value: string }
-  | { ok: false; message: string };
 
 export type PrivateBookmarkEditDraft = {
   title: string;
@@ -132,40 +135,6 @@ function mapNode(
   };
 }
 
-export function validatePrivateBookmarkUrl(rawUrl: string): BookmarkUrlValidationResult {
-  const trimmed = rawUrl.trim();
-
-  if (!trimmed) {
-    return {
-      ok: false,
-      message: "Bookmark URL is required."
-    };
-  }
-
-  let parsedUrl: URL;
-
-  try {
-    parsedUrl = new URL(trimmed);
-  } catch {
-    return {
-      ok: false,
-      message: "Bookmark URL must be a complete URL."
-    };
-  }
-
-  if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
-    return {
-      ok: false,
-      message: "Bookmark URL must start with http:// or https://."
-    };
-  }
-
-  return {
-    ok: true,
-    value: trimmed
-  };
-}
-
 export function getPrivateBookmarkLinkHref(rawUrl: string | undefined): string | null {
   if (!rawUrl) {
     return null;
@@ -193,16 +162,26 @@ export function buildPrivateBookmarkManagerViewModel(
   options: {
     selectedFolderId?: string;
     selectedNodeId?: string;
+    editingNodeId?: string;
   }
 ): PrivateBookmarkManagerViewModel {
   const selectedTreeNodeLocation = options.selectedNodeId
     ? findTreeNodeLocation(state.tree, options.selectedNodeId)
     : null;
+  const editingTreeNodeLocation = options.editingNodeId
+    ? findTreeNodeLocation(state.tree, options.editingNodeId)
+    : null;
   const fallbackFolderId = state.folders.some((folder) => folder.id === options.selectedFolderId)
     ? (options.selectedFolderId ?? state.selectedFolderId)
     : state.selectedFolderId;
+  const editingFolderContextId =
+    editingTreeNodeLocation?.node.type === "folder"
+      ? editingTreeNodeLocation.parentFolderId
+      : null;
   const resolvedSelectedFolderId =
-    selectedTreeNodeLocation?.node.type === "folder"
+    editingFolderContextId && options.editingNodeId === options.selectedNodeId
+      ? editingFolderContextId
+      : selectedTreeNodeLocation?.node.type === "folder"
       ? selectedTreeNodeLocation.node.id
       : selectedTreeNodeLocation?.parentFolderId ?? fallbackFolderId;
   const selectedFolderNode = findTreeNodeLocation(state.tree, resolvedSelectedFolderId)?.node ?? null;

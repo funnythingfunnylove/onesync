@@ -139,6 +139,23 @@ describe("private bookmark mutators", () => {
     });
   });
 
+  it("rejects creating a bookmark with an incomplete url from the runtime mutation path", () => {
+    const bundle = createBundle();
+
+    expect(() =>
+      applyPrivateBookmarkOperation(
+        bundle,
+        {
+          type: "create-bookmark",
+          parentId: "folder-b",
+          title: "Docs",
+          url: "example.com/docs"
+        },
+        "device-1"
+      )
+    ).toThrow(/complete url/i);
+  });
+
   it("renames a node in place", () => {
     const bundle = createBundle();
 
@@ -177,6 +194,23 @@ describe("private bookmark mutators", () => {
       url: "https://example.com/docs",
       updatedAt: "2026-07-01T12:00:00.000Z"
     });
+  });
+
+  it("rejects updating a bookmark to an unsafe url from the runtime mutation path", () => {
+    const bundle = createBundle();
+
+    expect(() =>
+      applyPrivateBookmarkOperation(
+        bundle,
+        {
+          type: "update-bookmark",
+          nodeId: "bookmark-1",
+          title: "Docs",
+          url: "javascript:alert(1)"
+        },
+        "device-1"
+      )
+    ).toThrow(/http:\/\/ or https:\/\//i);
   });
 
   it("deletes a node subtree and records tombstones", () => {

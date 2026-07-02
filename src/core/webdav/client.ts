@@ -335,68 +335,68 @@ export function createWebDavClient(config: SyncConfig) {
         }
       }
 
-      const devicesDirectoryUrl = toUrl(`${paths.baseDirectory}/devices`, config.webdavUrl);
-      const devicesResponse = await fetchWebDav(
-        devicesDirectoryUrl,
-        {
-          method: "PROPFIND",
-          headers: {
-            ...baseHeaders,
-            Depth: "1"
+      try {
+        const devicesDirectoryUrl = toUrl(`${paths.baseDirectory}/devices`, config.webdavUrl);
+        const devicesResponse = await fetchWebDav(
+          devicesDirectoryUrl,
+          {
+            method: "PROPFIND",
+            headers: {
+              ...baseHeaders,
+              Depth: "1"
+            }
+          },
+          "fetch device metadata listing"
+        );
+
+        if (devicesResponse.ok) {
+          const deviceUrls = parseWebDavHrefList(await devicesResponse.text(), devicesDirectoryUrl)
+            .filter((url) => url.pathname !== devicesDirectoryUrl.pathname)
+            .filter((url) => url.pathname.endsWith(".json"));
+
+          let newestDeviceState: DeviceStateMetadata | null = null;
+          let newestDeviceTimestamp: number | null = null;
+
+          for (const deviceUrl of deviceUrls) {
+            const deviceResponse = await fetchWebDav(deviceUrl, { headers: baseHeaders }, "fetch device metadata");
+
+            if (!deviceResponse.ok) {
+              continue;
+            }
+
+            const deviceState = (await deviceResponse.json()) as DeviceStateMetadata;
+            const deviceTimestamp = parseIsoTimestamp(deviceState.updatedAt);
+
+            if (deviceTimestamp === null) {
+              continue;
+            }
+
+            if (newestDeviceTimestamp === null || deviceTimestamp > newestDeviceTimestamp) {
+              newestDeviceTimestamp = deviceTimestamp;
+              newestDeviceState = deviceState;
+            }
           }
-        },
-        "fetch device metadata listing"
-      );
 
-      if (devicesResponse.status !== 404 && !isSuccessfulProbeStatus(devicesResponse.status)) {
-        throw new Error(`Failed to fetch WebDAV device listing: ${devicesResponse.status}`);
-      }
+          if (newestDeviceState && isNewerRevisionThanLatest(latestMetadata, newestDeviceState)) {
+            const historyBundlePath = buildRemotePaths(
+              config.basePath,
+              newestDeviceState.lastRevision!,
+              config.deviceId
+            ).historyBundle;
+            const historyBundleUrl = toUrl(historyBundlePath, config.webdavUrl);
+            const historyBundleResponse = await fetchWebDav(
+              historyBundleUrl,
+              { headers: baseHeaders },
+              "fetch history bundle"
+            );
 
-      if (devicesResponse.ok) {
-        const deviceUrls = parseWebDavHrefList(await devicesResponse.text(), devicesDirectoryUrl)
-          .filter((url) => url.pathname !== devicesDirectoryUrl.pathname)
-          .filter((url) => url.pathname.endsWith(".json"));
-
-        let newestDeviceState: DeviceStateMetadata | null = null;
-        let newestDeviceTimestamp: number | null = null;
-
-        for (const deviceUrl of deviceUrls) {
-          const deviceResponse = await fetchWebDav(deviceUrl, { headers: baseHeaders }, "fetch device metadata");
-
-          if (!deviceResponse.ok) {
-            continue;
-          }
-
-          const deviceState = (await deviceResponse.json()) as DeviceStateMetadata;
-          const deviceTimestamp = parseIsoTimestamp(deviceState.updatedAt);
-
-          if (deviceTimestamp === null) {
-            continue;
-          }
-
-          if (newestDeviceTimestamp === null || deviceTimestamp > newestDeviceTimestamp) {
-            newestDeviceTimestamp = deviceTimestamp;
-            newestDeviceState = deviceState;
-          }
-        }
-
-        if (newestDeviceState && isNewerRevisionThanLatest(latestMetadata, newestDeviceState)) {
-          const historyBundlePath = buildRemotePaths(
-            config.basePath,
-            newestDeviceState.lastRevision!,
-            config.deviceId
-          ).historyBundle;
-          const historyBundleUrl = toUrl(historyBundlePath, config.webdavUrl);
-          const historyBundleResponse = await fetchWebDav(
-            historyBundleUrl,
-            { headers: baseHeaders },
-            "fetch history bundle"
-          );
-
-          if (historyBundleResponse.ok) {
-            latestBundle = (await historyBundleResponse.json()) as EncodedBookmarkBundle;
+            if (historyBundleResponse.ok) {
+              latestBundle = (await historyBundleResponse.json()) as EncodedBookmarkBundle;
+            }
           }
         }
+      } catch {
+        // Device metadata and history probing are opportunistic compatibility checks.
       }
 
       return {

@@ -429,7 +429,8 @@ async function renderOptionsPage(
   const syncOverview = getSyncOverview(optionsViewModel.syncState);
   const privateBookmarkManager = buildPrivateBookmarkManagerViewModel(privateBookmarksState, {
     selectedFolderId: selectedPrivateFolderId ?? undefined,
-    selectedNodeId: selectedPrivateNodeId ?? undefined
+    selectedNodeId: selectedPrivateNodeId ?? undefined,
+    editingNodeId: editingPrivateNodeId ?? undefined
   });
 
   selectedPrivateFolderId = privateBookmarkManager.selectedFolder?.id ?? null;
